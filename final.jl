@@ -7,8 +7,8 @@ using CSV
 # DESCRIPTIONS
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 # 
-# States: (n^2 + 5 values)
-# Represented as (grid, 'lives' left, sunk ship (agent), sunk ships (opp), special shots) where:
+# States: (n^2 + 6 values)
+# Represented as (grid, 'lives' left, sunk ship (agent), sunk ships (opp), special shots (agent), special shots (opp)) where:
 #   Grid:
 #   n x n matrix of integers where each integer value represents:
 #       -1 : Missed
@@ -27,15 +27,21 @@ using CSV
 #   Sunk ships (opp):
 #   Integer representing the total number of our opponent's remaning ships
 #
-#   Special Shots:
+#   Special Shots (agent):
 #   Tuple of integers representing how many uses of each special shot type we have left
-#   (bomb shots left, line shots left) where each integer value is within the interval [0, 3]
+#   (bomb shots left, line shots left) where each integer value is 'hopefully' within the interval [0, 2]
+#   Rewards will be all negative for any interval violating this condition
 #
-# Actions: (2 values)
+#   Special Shots (opp): 
+#   Same as above but for the opponent's special shots
+#
+# Actions: (3 values)
 # Represented as tuple of integers:
-#   (pos1, pos2) where:
-#       pos1 is the column of the selected shot
-#       pos2 is the row of the selected shot
+#   (pos1, pos2, type) where:
+#       pos1 is the row of the selected shot
+#       pos2 is the column of the selected shot
+#       type is the type of the shot; options include:
+#           0: 'normal', -1: 'bomb', 1: 'line'
 #
 # Model: (highly variable number of values, depends on feature function)
 # Represented as a tuple of tuples:
@@ -102,6 +108,11 @@ left_direction = 1
 right_direction = 2
 up_direction = 3
 down_direction = 4
+
+# Shot Types
+bomb_shot = -1
+normal_shot = 0
+line_shot = 1
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 # CONSTANTS
@@ -284,9 +295,93 @@ function initialize_board(board_size)
 end
 
 # Functionality:
+#   Performs a bomb shot at a specific index
+#       Bomb shots are 3x3 area shots
+#   
+# Inputs:
+#   Board (n x n board) capturing the board state
+#   Position 1 (integer) is the column of the bomb shot
+#   Position 2 (integer) is the row of the bomb shot
+# 
+# Outputs:
+#   Board (n x n board) representing the updated board with the bomb shot
+function bomb_shot(board, pos1, pos2)
+    # Define the range for the bomb shot
+    row_range = max(1, pos2 - 1):min(board_size, pos2 + 1)
+    col_range = max(1, pos1 - 1):min(board_size, pos1 + 1)
+
+    # Apply the bomb shot to the 3x3 area
+    for i in row_range
+        for j in col_range
+            board[i, j] = (board[i, j][1], 1)
+        end
+    end
+    return board
+end
+
+# Functionality:
+#   Performs a line shot at a specific index
+#       Line shots explore an entire row or column
+#   
+# Inputs:
+#   Board (n x n board) capturing the board state
+#   Position 1 (integer) is the column of the line shot
+#   Position 2 (integer) is the row of the line shot
+#   Direction (integer) specifying which direction to take the line shot in
+# 
+# Outputs:
+#   Board (n x n board) representing the updated board with the line shot
+function line_shot(board, pos1, pos2, direction)
+    # Horizontal line shot
+    if direction == left_direction || direction == right_direction
+        for j in 1:board_size
+            board[pos2, j] = (board[pos2, j][1], 1)
+        end
+    # Vertical line shot
+    elseif direction == up_direction || direction == down_direction
+        for i in 1:board_size
+            board[i, pos1] = (board[i, pos1][1], 1)
+        end
+    end
+    return board
+end
+
+# Functionality:
+#   Converts a game board to a state board
+#   Should only be used on the opponent's board
+#   
+# Inputs:
+#   Board (n x n board) capturing a player's board
+#
+# Outputs:
+#   State board (n x n matrix) described above
+function board_to_state_board(opponents_board)
+    board = fill(0, (board_size, board_size))
+
+    for i in 1:board_size
+        for j in 1:board_size
+            # If we've explored a grid element
+            if opponents_board[i, j][2] == 1
+                # If that grid element has a ship
+                if opponents_board[i, j][1] != 0
+                    # Mark a hit
+                    board[i, j] = 1
+                else
+                    # Otherwise, mark a miss
+                    board[i, j] = -1
+                end
+            end
+        end
+    end
+
+    return board
+end
+
+# Functionality:
 #   Returns the next state given the current state and chosen action
 #   Assumes an opponent that follows a random policy
 #       Will randomly assign a shot type at a random placement
+#   Also returns the reward 
 #
 # Inputs:
 #   State (tuple) described above
@@ -296,8 +391,29 @@ end
 # 
 # Outputs:
 #   State (tuple) described above with updated values
+#   New Agent's Board (n x n board) capturing the agent's board
+#   New Opponent's Board (n x n board) capturing the Opponent's board
+#   Reward for this particular action
 function next_state(state, action, agents_board, opponents_board)
+    action_row, action_col, action_type = action
 
+    if action_type == bomb_shot
+        opponents_board = bomb_shot(opponents_board, action_row, action_col)
+    elseif action_type == line_shot
+        opponents_board = line_shot(opponents_board, action_row, action_col)
+    elseif action_type == normal_shot
+        opponents_board[action_row, action_col] = (opponents_board[action_row, action_col][1], 1)
+    end
+
+    agents_board = random_opponent_action(agents_board)
+
+    # Convert updated agents_board, opponents_board to state
+    state = nothing
+
+    # Calculate the reward
+    reward = nothing
+
+    return state, agents_board, opponents_board, reward
 end
 
 # Functionality:
@@ -440,6 +556,7 @@ end
 #       Agent marked a hit on an opponent's ship: +2
 #       Agent missed all opponent's ship: -0.5
 #       Agent sinks opponent's ship: +3
+#       Agent uses a special shot when it can't: -100000
 #       Opponent marked a hit on an agent's ship: -1
 #       Opponent missed all agent's ship: 0
 #       Opponent sinks agent's ship: -2
@@ -466,7 +583,11 @@ end
 # Outputs:
 #   Integer value representing the step size
 function calculate_step_size(move_index)
-
+    if toggle_initial_step_size
+        return initial_step_size
+    else
+        return initial_step_size * (0.99) ^ (move_index / 20)
+    end
 end
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
