@@ -59,6 +59,10 @@ using CSV
 # Classic battleship has 10 x 10 board size
 board_size = 10
 
+# Fleet of ships
+# Assumed standard fleet (1x2, 1x3, 1x3, 1x4, 1x5)
+fleet = [2, 3, 3, 4, 5]
+
 # Discount Factor
 # Since we can never return to a state, we'll never have loops 
 # Thus, discount factor of 1 is fine
@@ -66,7 +70,7 @@ gamma = 1
 
 # Which feature vector to use
 # Possibilities include 'concatenation', 'fourier'
-feature = 'concatenation' 
+feature = "concatenation"
 
 # Only if using feature 'fourier'
 # Defines the max number of fourier permutations to consider
@@ -80,7 +84,7 @@ initial_step_size = 0.005
 toggle_initial_step_size = true
 
 # The number of games we consider during training
-num_games_to_try = 1000
+num_games_to_try = 1#1000
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 # HYPERPARAMETERS
@@ -90,8 +94,134 @@ num_games_to_try = 1000
 # --------------------------------------------------------------------
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+# CONSTANTS
+# -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+
+# Directions
+left_direction = 1
+right_direction = 2
+up_direction = 3
+down_direction = 4
+
+# -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+# CONSTANTS
+# -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+
+# --------------------------------------------------------------------
+# --------------------------------------------------------------------
+
+# -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 # GAME DYNAMICS
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+
+# Functionality:
+#   Prints the board to the terminal
+#  
+# Inputs:
+#   Board (n x n matrix) representing the current state of the game board
+#
+# Outputs: 
+#   Prints the board to the terminal
+#   Outputs nothing
+function print_board(board)
+    for row in 1:board_size
+        for column in 1:board_size
+            print(board[row, column])
+        end
+        println(' ')
+    end
+    println(' ')
+end
+
+# Functionality:
+#   Helper function for initialize_board
+#   Tests whether a ship can be placed in a specified direction from a starting position
+#   If update_board is true, it returns the updated board; otherwise, it returns a boolean indicating if the direction is valid
+#
+# Inputs:
+#   Board (n x n matrix) representing the current state of the game board
+#   Row (integer) representing the starting row for placing the ship
+#   Column (integer) representing the starting column for placing the ship
+#   Direction (integer)  representing the direction to place the ship (1: left, 2: right, 3: up, 4: down)
+#   Ship (integer)  representing the length of the ship to be placed
+#   Ship Index (integer) representing a particular ship's index
+#   Update Board (boolean) that determines whether to update the board or just check if the direction is valid
+#
+# Outputs:
+#   If update_board is true, returns a copy of the board with the ship placed in the specified direction
+#   If update_board is false, returns a boolean indicating whether the ship can be placed in the specified direction
+function direction_works(board, row, column, direction, ship, ship_index, update_board)
+    # Setup
+    slots_filled = ship - 1
+    values_remaining = ship - 1
+    current_row = row
+    current_column = column
+
+    board_copy = copy(board)
+    board_copy[row, column] = (ship_index, 0)
+
+    # Test the specified direction
+    for i in 1:ship - 1
+        if direction == left_direction
+            current_column -= 1
+        elseif direction == right_direction
+            current_column += 1
+        elseif direction == up_direction
+            current_row -= 1
+        else
+            current_row += 1
+        end 
+
+        # Check that the new position is within the board
+        if current_row < 1 || current_row > board_size || current_column < 1 || current_column > board_size 
+            break
+        end
+
+        # Check that the position isn't already occupied by another ship
+        if board_copy[current_row, current_column][1] != 0
+            break
+        end
+
+        # Update the current position
+        board_copy[current_row, current_column] = (ship_index, 0)
+        values_remaining -= 1
+        slots_filled -= 1
+    end
+
+    current_row = row
+    current_column = column
+    # Test the next direction
+    for i in 1:values_remaining
+        if direction == left_direction
+            current_column += 1
+        elseif direction == right_direction
+            current_column -= 1
+        elseif direction == up_direction
+            current_row += 1
+        else
+            current_row -= 1
+        end 
+
+        # Check that the new position is within the board
+        if current_row < 1 || current_row > board_size || current_column < 1 || current_column > board_size 
+            break
+        end
+
+        # Check that the position isn't already occupied by another ship
+        if board[current_row, current_column][1] != 0
+            break
+        end
+
+        board_copy[current_row, current_column] = (ship_index, 0)
+        slots_filled -= 1
+    end
+
+    if update_board
+        return board_copy
+    else
+        return slots_filled == 0
+    end
+end
 
 # Functionality:
 #   Initializes an n x n Battleship board with random fleet assortment
@@ -106,12 +236,51 @@ num_games_to_try = 1000
 #       (fleet_position, status) where:
 #           Fleet positions are defined as integers with:
 #               0 representing no ship
-#               1 representing ship
+#               i representing ship where i is some unique integer for each ship
 #           Status is whether the specified position has been shot at:
 #               0 represents hasn't yet been shot
 #               1 represents shot
 function initialize_board(board_size)
+    board = fill((0, 0), (board_size, board_size))
+    
+    shuffled_fleet = shuffle(fleet)
 
+    # Iterate over all ships
+    ship_index = 1
+    for ship in shuffled_fleet
+        while true
+            random_row = rand(1:board_size)
+            random_column = rand(1:board_size)
+
+            # Check if the initial placement is on another ship
+            if board[random_row, random_column][1] != 0
+                continue
+            end
+
+            # Pick a random direction
+            direction = rand(1:4)
+
+            if !direction_works(board, random_row, random_column, direction, ship, ship_index, false)
+                if direction == left_direction || direction == right_direction
+                    direction = rand(up_direction:down_direction)
+                else
+                    direction = rand(left_direction:right_direction)
+                end
+
+                # If both directions don't work, then continue trying initial starting positions
+                if !direction_works(board, random_row, random_column, direction, ship, ship_index, false)
+                    continue
+                end
+            end
+
+            # If we're here, then direction is a valid direction and we should populate the board with this ship
+            board = direction_works(board, random_row, random_column, direction, ship, ship_index, true)
+            ship_index += 1
+            break
+        end
+    end
+
+    return board
 end
 
 # Functionality:
@@ -302,18 +471,24 @@ function main()
         agents_board = initialize_board(board_size)
         opponents_board = initialize_board(board_size)
 
-        move_index = 1
+        println("AGENT'S BOARD")
+        print_board(agents_board)
+
+        println("OPPONENT'S BOARD")
+        print_board(opponents_board)
+
+        #move_index = 1
         # Iterate until the game is over
-        while !is_game_ended(agents_board, opponents_board)
+        #while !is_game_ended(agents_board, opponents_board)
 
             # Generate Features
-            feature_vector = nothing
-            if feature == 'concatenation'
-                feature_vector = 
-            elseif feature == 'fourier'
+            #feature_vector = nothing
+            #if feature == "concatenation"
+                #feature_vector = 
+            #elseif feature == "fourier"
 
-            move_index += 1
-        end
+            #move_index += 1
+        #end
     end
 end
 
