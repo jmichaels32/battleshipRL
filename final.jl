@@ -311,7 +311,24 @@ end
 # Outputs:
 #   Boolean which is true if the game has ended
 function is_game_ended(agents_board, opponents_board)
+    agents_board_finished = true
 
+    for cell in agents_board
+        # If there's a ship that hasn't been shot at, this board still has 'lives'
+        if cell[1] != 0 && cell[2] == 0
+            agents_board_finished = false
+        end
+    end
+
+    opponents_board_finished = true
+
+    for cell in opponents_board
+        if cell[1] != 0 && cell[2] == 0
+            opponents_board_finished = false
+        end
+    end
+
+    return agents_board_finished || opponents_board_finished
 end
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
@@ -476,6 +493,8 @@ function main()
 
         println("OPPONENT'S BOARD")
         print_board(opponents_board)
+
+        println(is_game_ended(agents_board, opponents_board))
 
         #move_index = 1
         # Iterate until the game is over
