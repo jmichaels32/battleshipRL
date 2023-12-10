@@ -116,6 +116,14 @@ bomb_shot = -1
 normal_shot = 0
 line_shot = 1
 
+# Number of bomb/line shots players start with
+initial_number_of_bomb_shots = 3
+initial_number_of_line_shots = 3
+
+# Initial constants for state variable
+initial_number_of_lives_left = sum(fleet)
+initial_number_of_ships_left = length(fleet)
+
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 # CONSTANTS
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
@@ -385,23 +393,105 @@ end
 #   
 # Inputs:
 #   Board (n x n board) capturing the agent's board
+#   Integer representing how many bomb shots are left
+#   Integer representing how many line shots are left
 #
 # Outputs:
-#   Updated agent's board with opponent's random action
-function random_opponent_action(agents_board)
+#   Tuple with
+#       Updated agent's board with opponent's random action
+#       Integer representing how many bomb shots are left
+#       Integer representing how many line shots are left
+function random_opponent_action(agents_board, bomb_shots_left, line_shots_left)
     random_action = rand([bomb_shot, line_shot, normal_shot])
 
     if random_action == bomb_shot
         agents_board = perform_bomb_shot(agents_board, rand(1:board_size), rand(1:board_size))
+        bomb_shots_left -= 1
     elseif random_action == line_shot
-        agents_board = perform_line_shot(agents_board, rand(1:board_size), rand(1:board_size))
+        agents_board = perform_line_shot(agents_board, rand(1:board_size), rand(1:board_size), rand(1:4))
+        line_shots_left -= 1
     elseif random_action == normal_shot
         random_row = rand(1:board_size)
         random_col = rand(1:board_size)
         agents_board[random_row, random_col] = (agents_board[random_row, random_col][1], 1)
     end
 
-    return agents_board
+    return agents_board, bomb_shots_left, line_shots_left
+end
+
+# Functionality:
+#   Converts the opponent's board into a state board (the board the user sees)
+#   
+# Inputs:
+#   Board (n x n board) capturing the opponent's board
+#
+# Outputs:
+#    State Board (n x n board) capturing the opponents's board
+#       Defined above
+function convert_to_state_board(opponents_board)
+    state_board = fill(0, (board_size, board_size))
+
+    for i in 1:board_size
+        for j in 1:board_size
+            if opponents_board[i, j][2] == 1
+                if opponents_board[i, j][1] != 0
+                    state_board[i, j] = 1
+                else
+                    state_board[i, j] = -1
+                end
+            end
+        end
+    end
+
+    return state_board
+end
+
+# Functionality:
+#   Calculates how many lives we have left (ship positions remaining)
+#   
+# Inputs:
+#   Board (n x n board) capturing a game board
+#
+# Outputs:
+#    Integer representing how many lives left (must be <= 17)
+function lives_left(board)
+    lives = 0
+    for i in 1:board_size
+        for j in 1:board_size
+            if board[i, j][1] != 0 && board[i, j][2] == 0
+                lives += 1
+            end
+        end
+    end
+    return lives
+end
+
+# Functionality:
+#   Calculates how many ships we have left 
+#   
+# Inputs:
+#   Board (n x n board) capturing a game board
+#
+# Outputs:
+#    Integer representing how many ships we have left (must be <= 5)
+function ships_left(board)
+    ships_remaining = length(fleet)
+    # Iterate through the number of ships
+    for ship in 1:length(fleet)
+        # For each ship, see if that ship is sunk
+        decrement = true
+        for i in 1:board_size
+            for j in 1:board_size
+                if board[i, j][1] == ship && board[i, j][2] == 0
+                    decrement = false
+                end
+            end
+        end
+        if decrement 
+            ships_remaining -= 1
+        end
+    end
+    return ships_remaining
 end
 
 # Functionality:
@@ -422,25 +512,81 @@ end
 #   New Opponent's Board (n x n board) capturing the Opponent's board
 #   Reward for this particular action
 function next_state(state, action, agents_board, opponents_board)
+    # Gather all information from the state/action
+    agents_shots_left = (initial_number_of_bomb_shots, initial_number_of_line_shots)
+    opponents_shots_left = (initial_number_of_bomb_shots, initial_number_of_line_shots)
+    agents_lives_left = initial_number_of_lives_left
+    opponents_lives_left = initial_number_of_lives_left
+    agents_ships_left = initial_number_of_ships_left
+    opponents_ships_left = initial_number_of_ships_left
+
+    if state != nothing
+        _, agents_lives_left, agents_ships_left, opponents_ships_left, agents_shots_left, opponents_shots_left = state
+        opponents_lives_left = lives_left(opponents_board) # Only used in reward
+    end
     action_row, action_col, action_direction, action_type = action
+    agents_bomb_shots_left, agents_line_shots_left = agents_shots_left
+    opponents_bomb_shots_left, opponents_line_shots_left = opponents_shots_left
 
     # Agent's play
     if action_type == bomb_shot
         opponents_board = perform_bomb_shot(opponents_board, action_row, action_col)
+        agents_bomb_shots_left -= 1
     elseif action_type == line_shot
         opponents_board = perform_line_shot(opponents_board, action_row, action_col, action_direction)
+        agents_line_shots_left -= 1
     elseif action_type == normal_shot
         opponents_board[action_row, action_col] = (opponents_board[action_row, action_col][1], 1)
     end
 
     # Opponent's play
-    agents_board = random_opponent_action(agents_board)
+    agents_board, opponents_bomb_shots_left, opponents_line_shots_left = random_opponent_action(agents_board, opponents_bomb_shots_left, opponents_line_shots_left)
 
     # Convert updated agents_board, opponents_board to state
-    state = nothing
+    new_agents_lives_left = lives_left(agents_board)
+    new_opponents_lives_left = lives_left(opponents_board) # Only used in reward
+    new_agents_ships_left = ships_left(agents_board)
+    new_opponents_ships_left = ships_left(opponents_board)
+    state = (convert_to_state_board(opponents_board), 
+            new_agents_lives_left,
+            new_agents_ships_left,
+            new_opponents_ships_left,
+            (agents_bomb_shots_left, agents_line_shots_left),
+            (opponents_bomb_shots_left, opponents_line_shots_left)
+            )
 
     # Calculate the reward
-    reward = nothing
+    #   Rewards for possible scenarios are:
+    #       Agent marked a hit on an opponent's ship: +2
+    #       Agent missed all opponent's ship: -0.5
+    #       Agent sinks opponent's ship: +3
+    #       Agent uses a special shot when it can't: -100000
+    #       Opponent marked a hit on an agent's ship: -1
+    #       Opponent missed all agent's ship: 0
+    #       Opponent sinks agent's ship: -2
+    #       (Note: these are stackable; if we hit an opponent's ship twice then +4)
+    reward = 0
+
+    # Hit or missing opponents ship
+    if opponents_lives_left - new_opponents_lives_left == 0
+        reward -= 0.5
+    else
+        reward += 2 * (opponents_lives_left - new_opponents_lives_left)
+    end
+
+    # Sinking opponents ship
+    reward += 3 * (opponents_ships_left - new_opponents_ships_left)
+
+    # Opponent hit our ship
+    reward -= (agents_lives_left - new_agents_lives_left)
+
+    # Opponent sinks our ship
+    reward -= 2 * (agents_ships_left - new_agents_ships_left)
+
+    # Ran out of special shots
+    if agents_bomb_shots_left < 0 || agents_line_shots_left < 0 
+        reward -= 10000
+    end
 
     return state, agents_board, opponents_board, reward
 end
@@ -579,31 +725,6 @@ end
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 
 # Functionality:
-#   Generates reward from a given state and action
-#   Uses next_state to generate the future state given the action
-#   Rewards for possible scenarios are:
-#       Agent marked a hit on an opponent's ship: +2
-#       Agent missed all opponent's ship: -0.5
-#       Agent sinks opponent's ship: +3
-#       Agent uses a special shot when it can't: -100000
-#       Opponent marked a hit on an agent's ship: -1
-#       Opponent missed all agent's ship: 0
-#       Opponent sinks agent's ship: -2
-#       (Note: these are stackable; if we hit an opponent's ship twice then +4)
-#
-# Inputs:
-#   State (tuple) described above
-#   Action (tuple) described above
-# 
-# Outputs:
-#   Integer value representing reward of that particular action from the specified state
-function reward(state, action)
-    # TO IMPLEMENT
-    return nothing
-    # TO IMPLEMENT
-end
-
-# Functionality:
 #   Reduces the step size depending on how far we are into the game to improve convergence
 #   Uses initial_step_size
 #   Toggleable using toggle_initial_step_size, which if is true we only return initial_step_size
@@ -648,13 +769,25 @@ function main()
 
         println(is_game_ended(agents_board, opponents_board))
 
-        s, agents_board, opponents_board, r = next_state(nothing, (2, 6, left_direction, line_shot), agents_board, opponents_board)
+        state, agents_board, opponents_board, reward = next_state(nothing, (2, 6, left_direction, line_shot), agents_board, opponents_board)
+        println("AGENT'S BOARD")
         print_board(agents_board)
+
+        println("OPPONENT'S BOARD")
         print_board(opponents_board)
 
-        s, agents_board, opponents_board, r = next_state(nothing, (2, 6, right_direction, bomb_shot), agents_board, opponents_board)
+        println(state)
+        println(reward)
+
+        state, agents_board, opponents_board, reward = next_state(state, (2, 6, right_direction, bomb_shot), agents_board, opponents_board)
+        println("AGENT'S BOARD")
         print_board(agents_board)
+
+        println("OPPONENT'S BOARD")
         print_board(opponents_board)
+
+        println(state)
+        println(reward)
 
         #move_index = 1
         # Iterate until the game is over
