@@ -37,9 +37,11 @@ using CSV
 #
 # Actions: (3 values)
 # Represented as tuple of integers:
-#   (pos1, pos2, type) where:
+#   (pos1, pos2, direction, type) where:
 #       pos1 is the row of the selected shot
 #       pos2 is the column of the selected shot
+#       direction is the direction of the shot (only applicable for line shot)
+#           Possible directions are given below in the constants sections
 #       type is the type of the shot; options include:
 #           0: 'normal', -1: 'bomb', 1: 'line'
 #
@@ -305,7 +307,7 @@ end
 # 
 # Outputs:
 #   Board (n x n board) representing the updated board with the bomb shot
-function bomb_shot(board, pos1, pos2)
+function perform_bomb_shot(board, pos1, pos2)
     # Define the range for the bomb shot
     row_range = max(1, pos2 - 1):min(board_size, pos2 + 1)
     col_range = max(1, pos1 - 1):min(board_size, pos1 + 1)
@@ -331,7 +333,7 @@ end
 # 
 # Outputs:
 #   Board (n x n board) representing the updated board with the line shot
-function line_shot(board, pos1, pos2, direction)
+function perform_line_shot(board, pos1, pos2, direction)
     # Horizontal line shot
     if direction == left_direction || direction == right_direction
         for j in 1:board_size
@@ -378,6 +380,31 @@ function board_to_state_board(opponents_board)
 end
 
 # Functionality:
+#   Opponent performs a random action on the agent's board
+#   Should only be used on the agent's board
+#   
+# Inputs:
+#   Board (n x n board) capturing the agent's board
+#
+# Outputs:
+#   Updated agent's board with opponent's random action
+function random_opponent_action(agents_board)
+    random_action = rand([bomb_shot, line_shot, normal_shot])
+
+    if random_action == bomb_shot
+        agents_board = perform_bomb_shot(agents_board, rand(1:board_size), rand(1:board_size))
+    elseif random_action == line_shot
+        agents_board = perform_line_shot(agents_board, rand(1:board_size), rand(1:board_size))
+    elseif random_action == normal_shot
+        random_row = rand(1:board_size)
+        random_col = rand(1:board_size)
+        agents_board[random_row, random_col] = (agents_board[random_row, random_col][1], 1)
+    end
+
+    return agents_board
+end
+
+# Functionality:
 #   Returns the next state given the current state and chosen action
 #   Assumes an opponent that follows a random policy
 #       Will randomly assign a shot type at a random placement
@@ -395,16 +422,18 @@ end
 #   New Opponent's Board (n x n board) capturing the Opponent's board
 #   Reward for this particular action
 function next_state(state, action, agents_board, opponents_board)
-    action_row, action_col, action_type = action
+    action_row, action_col, action_direction, action_type = action
 
+    # Agent's play
     if action_type == bomb_shot
-        opponents_board = bomb_shot(opponents_board, action_row, action_col)
+        opponents_board = perform_bomb_shot(opponents_board, action_row, action_col)
     elseif action_type == line_shot
-        opponents_board = line_shot(opponents_board, action_row, action_col)
+        opponents_board = perform_line_shot(opponents_board, action_row, action_col, action_direction)
     elseif action_type == normal_shot
         opponents_board[action_row, action_col] = (opponents_board[action_row, action_col][1], 1)
     end
 
+    # Opponent's play
     agents_board = random_opponent_action(agents_board)
 
     # Convert updated agents_board, opponents_board to state
@@ -569,7 +598,9 @@ end
 # Outputs:
 #   Integer value representing reward of that particular action from the specified state
 function reward(state, action)
-
+    # TO IMPLEMENT
+    return nothing
+    # TO IMPLEMENT
 end
 
 # Functionality:
@@ -616,6 +647,14 @@ function main()
         print_board(opponents_board)
 
         println(is_game_ended(agents_board, opponents_board))
+
+        s, agents_board, opponents_board, r = next_state(nothing, (2, 6, left_direction, line_shot), agents_board, opponents_board)
+        print_board(agents_board)
+        print_board(opponents_board)
+
+        s, agents_board, opponents_board, r = next_state(nothing, (2, 6, right_direction, bomb_shot), agents_board, opponents_board)
+        print_board(agents_board)
+        print_board(opponents_board)
 
         #move_index = 1
         # Iterate until the game is over
