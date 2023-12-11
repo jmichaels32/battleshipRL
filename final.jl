@@ -97,7 +97,7 @@ initial_step_size = 0.0005
 toggle_initial_step_size = true
 
 # The number of games we consider during training
-num_games_to_try = 500
+num_games_to_try = 1000
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 # HYPERPARAMETERS
@@ -757,9 +757,9 @@ end
 # 
 # Outputs:
 #   Predicted Q given a state, action and the current model's weights
-function forward(model, feature)
+function forward(deep_model, feature)
     # Use the model to perform a forward pass and predict Q values
-    return model(feature)
+    return deep_model(feature)
 end
 
 # Functionality:
@@ -789,7 +789,7 @@ end
 #   Updated model with new weights after performing backpropagation
 
 optim = Flux.Optimise.Adam(0.001, (0.9, 0.999), 1.0e-8)
-function backprop(model, target, move_index, state, action, new_state, new_action, reward)
+function backprop(modelA, modelB, move_index, state, action, new_state, new_action, reward, a_or_b)
     # Calculate step size
     eta = calculate_step_size(move_index)
 
@@ -801,7 +801,15 @@ function backprop(model, target, move_index, state, action, new_state, new_actio
     end
 
     # Perform the backward pass using Flux's gradient function
-    grads = Flux.gradient(() -> loss(model, target, feature, reward, next_feature), Flux.params(model))
+    grads = nothing
+    if a_or_b == 0
+        grads = Flux.gradient(() -> loss(modelA, modelB, feature, reward, next_feature, a_or_b), Flux.params(modelA))
+        Flux.Optimise.update!(optim, Flux.params(modelA), grads)
+    else
+        grads = Flux.gradient(() -> loss(modelA, modelB, feature, reward, next_feature, a_or_b), Flux.params(modelB))
+        Flux.Optimise.update!(optim, Flux.params(modelB), grads)
+    end
+    
 
     """
     for p in Flux.params(model)
@@ -810,11 +818,9 @@ function backprop(model, target, move_index, state, action, new_state, new_actio
     end
     """
 
-    Flux.Optimise.update!(optim, Flux.params(model), grads)
 
 
-
-    return model
+    return modelA, modelB
 end
 
 # L2 norm
@@ -830,11 +836,19 @@ function l2_regularization(model::Flux.Chain, lambda::Float64)
 end
 
 # Loss function definition for the Q-learning update rule
-function loss(model, target, feature, reward, next_feature)
+function loss(modelA, modelB, feature, reward, next_feature, a_or_b)
     next_Q_values = 0
-    current_Q_values = forward(model, feature)[1]
-    if next_feature != nothing
-        next_Q_values = forward(model, next_feature)[1]
+    current_Q_values = 0
+    if a_or_b == 0
+        current_Q_values = forward(modelA, feature)[1]
+        if next_feature != nothing
+            next_Q_values = forward(modelB, next_feature)[1]
+        end
+    else
+        current_Q_values = forward(modelB, feature)[1]
+        if next_feature != nothing
+            next_Q_values = forward(modelA, next_feature)[1]
+        end
     end
     td_error = (reward + gamma * next_Q_values - current_Q_values)^2 #+ l2_regularization(model, lambda)
     return td_error
@@ -918,7 +932,7 @@ end
 # 
 # Outputs:
 #   Next optimal action
-function find_action(model, target, state, agent_actions_remaining, is_cur)
+function find_action(modelA, modelB, state, agent_actions_remaining, is_cur, a_or_b)
     action_selected = nothing
     maximum_q = -Inf
     _, _, _, _, (bomb_shots_left, line_shots_left), _ = state # Parse how many shots of each type we have left
@@ -936,7 +950,19 @@ function find_action(model, target, state, agent_actions_remaining, is_cur)
             continue
         end
         feature = feature_concatenate_vector(state, (shot_type, x, y))
-        q = forward(model, feature)[1]
+        qA = forward(modelA, feature)[1]
+        qB = forward(modelB, feature)[1]
+        q = (qA + qB) / 2.0
+        if !is_cur
+            qA = 0
+            qB = 0
+            if a_or_b == 0
+                qA = forward(modelA, feature)[1]
+            elseif a_or_b == 1
+                qB = qB = forward(modelB, feature)[1]
+            end
+            q = qA + qB
+        end
         if maximum_q < q
             action_selected = (shot_type, x, y)
             maximum_q = q
@@ -963,26 +989,26 @@ end
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 # MAIN
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
-
+C = 2
 function main()
     if model_type == 0
 
     end
     if model_type == 1
         # Initialize model using Flux
-        model = Chain(
+        modelA = Chain(
             Dense(input_size, layer_sizes[1], relu),
             Dense(layer_sizes[1], layer_sizes[2], relu),
             Dense(layer_sizes[2], output_size)
         )
 
-        target_model = Chain(
+        modelB = Chain(
             Dense(input_size, layer_sizes[1], relu),
             Dense(layer_sizes[1], layer_sizes[2], relu),
             Dense(layer_sizes[2], output_size)
         )
 
-        Flux.loadparams!(target_model, Flux.params(model))
+        #Flux.loadparams!(target_model, Flux.params(model))
 
         agent_wins = zeros(Int8, num_games_to_try)
         opp_wins = zeros(Int8, num_games_to_try)
@@ -1016,17 +1042,18 @@ function main()
             while !is_game_ended(agents_board, opponents_board)[3]
 
                 # Find which action we should take dependent on the model
-                action = find_action(model, target_model, state, agent_actions_remaining, true)
+                action = find_action(modelA, modelB, state, agent_actions_remaining, true, nothing)
                 
                 new_state, agents_board, opponents_board, reward = next_state(state, action, agents_board, opponents_board, opp_actions_remaining)
 
+                a_or_b = rand(0:1)
                 #println(action)
                 #println(opponents_board)
                 #println(agents_board)
                 #println()
                 a, o, _ = is_game_ended(agents_board, opponents_board)
                 if a || o
-                    model = backprop(model, target_model, move_index, state, action, new_state, nothing, 1000)
+                    modelA, modelB = backprop(modelA, modelB, move_index, state, action, new_state, nothing, 1000, a_or_b)
                     if a
                         println("OPPONENT WIN")
                         opp_wins[iter] = 1
@@ -1037,15 +1064,16 @@ function main()
                     break
                 end
 
-                new_action = find_action(model, target_model, new_state, agent_actions_remaining, false)
+
+                new_action = find_action(modelA, modelB, new_state, agent_actions_remaining, false, a_or_b)
 
                 #println(action)
                 #println(reward)
 
-                model = backprop(model, move_index, state, action, new_state, new_action, reward)
+                modelA, modelB = backprop(modelA, modelB, move_index, state, action, new_state, new_action, reward, a_or_b)
 
                 count += 1
-                avg_loss += loss(model, feature_concatenate_vector(state, action), reward, feature_concatenate_vector(new_state, new_action))
+                avg_loss += loss(modelA, modelB, feature_concatenate_vector(state, action), reward, feature_concatenate_vector(new_state, new_action), a_or_b)
                 #println("Loss: ", loss(model, feature_concatenate_vector(state, action), reward, feature_concatenate_vector(new_state, new_action)))
                 state = new_state
 
@@ -1057,7 +1085,6 @@ function main()
             avg_loss /= count
             losses[iter] = avg_loss
             println("Loss: ", avg_loss)
-
 
             #println("END GAME")
 
@@ -1123,7 +1150,7 @@ function main()
         for action in 1:220
             shot_type, x, y = get_action(action)
             feature = feature_concatenate_vector(state, (shot_type, x, y))
-            q = forward(model, feature)[1]
+            q = (forward(modelA, feature)[1] + forward(modelB, feature)[1]) / 2.0
             q_start[action] = q
         end
         println(q_start)
