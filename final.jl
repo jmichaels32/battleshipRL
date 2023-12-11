@@ -7,7 +7,7 @@ using CSV
 # DESCRIPTIONS
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 # 
-# States: (n^2 + 6 values)
+# States: (n^2 + 7 values)
 # Represented as (grid, 'lives' left, sunk ship (agent), sunk ships (opp), special shots (agent), special shots (opp)) where:
 #   Grid:
 #   n x n matrix of integers where each integer value represents:
@@ -35,7 +35,7 @@ using CSV
 #   Special Shots (opp): 
 #   Same as above but for the opponent's special shots
 #
-# Actions: (3 values)
+# Actions: (220 dim vector storing one hot vector of each possible action)
 # Represented as tuple of integers:
 #   (pos1, pos2, direction, type) where:
 #       pos1 is the row of the selected shot
@@ -123,6 +123,12 @@ initial_number_of_line_shots = 3
 # Initial constants for state variable
 initial_number_of_lives_left = sum(fleet)
 initial_number_of_ships_left = length(fleet)
+
+# Model input/output and hidden sizes
+input_size = board_size * board_size + 7 + 4 # State + Action sizes (described above)
+output_size = 1 # Action size
+layer_sizes = [200, 100]
+
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 # CONSTANTS
@@ -558,34 +564,48 @@ function next_state(state, action, agents_board, opponents_board)
     # Calculate the reward
     #   Rewards for possible scenarios are:
     #       Agent marked a hit on an opponent's ship: +2
+    opponents_ship_hit_reward = 2
     #       Agent missed all opponent's ship: -0.5
-    #       Agent sinks opponent's ship: +3
+    opponents_ship_missed_reward = -0.5
+    #       Agent hit same spot it already shot: -1 # TO IMPLEMENT
+    #agent_hit_same_spot = -1
+    #       Agent sinks opponent's ship: +5
+    opponents_ship_sink_reward = 5
     #       Agent uses a special shot when it can't: -100000
+    agent_used_empty_shot = -100000
     #       Opponent marked a hit on an agent's ship: -1
+    agents_ship_hit_reward = -1
     #       Opponent missed all agent's ship: 0
+    agents_ship_missed_reward = 0
     #       Opponent sinks agent's ship: -2
+    agents_ship_sink_reward = -2
     #       (Note: these are stackable; if we hit an opponent's ship twice then +4)
     reward = 0
 
     # Hit or missing opponents ship
     if opponents_lives_left - new_opponents_lives_left == 0
-        reward -= 0.5
+        reward += opponents_ship_missed_reward
     else
-        reward += 2 * (opponents_lives_left - new_opponents_lives_left)
+        reward += opponents_ship_hit_reward * (opponents_lives_left - new_opponents_lives_left)
     end
 
     # Sinking opponents ship
-    reward += 3 * (opponents_ships_left - new_opponents_ships_left)
+    reward += opponents_ship_sink_reward * (opponents_ships_left - new_opponents_ships_left)
 
-    # Opponent hit our ship
-    reward -= (agents_lives_left - new_agents_lives_left)
+    if agents_lives_left - new_agents_lives_left == 0
+        # Opponent missed our ship
+        reward += agents_missed_hit_reward 
+    else 
+        # Opponent hit our ship
+        reward += agents_ship_hit_reward * (agents_lives_left - new_agents_lives_left)
+    end
 
     # Opponent sinks our ship
-    reward -= 2 * (agents_ships_left - new_agents_ships_left)
+    reward += agents_ship_sink_reward * (agents_ships_left - new_agents_ships_left)
 
     # Ran out of special shots
     if agents_bomb_shots_left < 0 || agents_line_shots_left < 0 
-        reward -= 10000
+        reward += agent_used_empty_shot
     end
 
     return state, agents_board, opponents_board, reward
@@ -660,7 +680,32 @@ end
 # Outputs:
 #   Concatenated features for all inputted values
 function feature_concatenate_vector(state, action)
+    # Extract state components
+    state_board, agents_lives_left, agents_ships_left, opponents_ships_left, agents_shots_left, opponents_shots_left = state
 
+    # Flatten the state board to include in the feature vector
+    state_flattened = [cell for row in state_board for cell in row]
+
+    # Extract action components
+    action_row, action_col, action_direction, action_type = action
+
+    # Concatenate state and action components into a single feature vector
+    feature_vector = [
+        state_flattened..., # Include the flattened state board
+        agents_lives_left,
+        agents_ships_left,
+        opponents_ships_left,
+        agents_shots_left[1], # Bomb shots left for agent
+        agents_shots_left[2], # Line shots left for agent
+        opponents_shots_left[1], # Bomb shots left for opponent
+        opponents_shots_left[2], # Line shots left for opponent
+        action_row,
+        action_col,
+        action_direction,
+        action_type
+    ]
+
+    return feature_vector
 end
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
@@ -680,13 +725,32 @@ end
 #
 # Inputs:
 #   Model (tuple) described above
-#   Feature () described above
+#   Feature (vector) described above
 #       Can be any of the options defined above
 # 
 # Outputs:
 #   Predicted Q given a state, action and the current model's weights
 function forward(model, feature)
-
+    # Initialize input as the feature vector
+    input = feature
+    
+    # Iterate over each layer in the model
+    for (weights, bias, activation) in model
+        # Calculate the pre-activation values with the transpose of the weights
+        pre_activation = (weights') * input .+ bias
+        
+        # Apply activation function
+        if activation == "relu"
+            input = max.(0, pre_activation)
+        elseif activation == "linear"
+            input = pre_activation
+        else
+            error("Unknown activation function: $activation")
+        end
+    end
+    
+    # The final input is the output of the last layer, which is the predicted Q values
+    return input
 end
 
 # Functionality:
@@ -709,12 +773,63 @@ end
 #   Model (tuple) described above
 #   Feature () described above
 #       Can be any of the options defined above
+#   Reward (integer) representing the reward from the current state to next state
 #   Move Index (integer) for use in calculating the step size
 # 
 # Outputs:
 #   Predicted Q given a state, action and the current model's weights
-function backprop(model, feature, move_index) 
+function backprop(model, feature, reward, move_index) 
+    # Calculate step size
+    eta = calculate_step_size(move_index)
 
+    # Forward pass to get the current Q-values
+    current_Q_values = forward(model, feature)
+
+    # Compute the TD error using the reward
+    td_error = reward - current_Q_values
+
+    # Initialize gradients for each layer
+    gradients = [(zeros(size(layer[1])), zeros(size(layer[2]))) for layer in model]
+
+    # Backward pass to compute gradients
+    delta = td_error
+    for i in length(model):-1:1
+        weights, biases, activation = model[i]
+        input_to_layer = i == 1 ? feature : forward(model[1:i-1], feature)
+        
+        # Compute gradient for weights and biases
+        # This is a simplified version; you'll need to compute the actual gradients based on the activation function
+        grad_weights = input_to_layer * delta'
+        grad_biases = delta
+
+        # Store gradients
+        gradients[i] = (grad_weights, grad_biases)
+
+        # Compute delta for previous layer (if not the first layer)
+        if i > 1
+            delta = weights * delta
+            # Apply derivative of activation function if necessary
+            if model[i-1][3] == "relu"
+                delta = delta .* (input_to_layer .> 0)
+            end
+        end
+    end
+
+    # Update model parameters
+    new_model = []
+    for i in 1:length(model)
+        weights, biases, activation = model[i]
+        grad_weights, grad_biases = gradients[i]
+
+        # Update weights and biases
+        new_weights = weights - eta * grad_weights
+        new_biases = biases - eta * grad_biases
+
+        # Append updated layer to new model
+        push!(new_model, (new_weights, new_biases, activation))
+    end
+
+    return new_model
 end
 
 # --------------------------------------------------------------------
@@ -742,6 +857,46 @@ function calculate_step_size(move_index)
     end
 end
 
+# Functionality:
+#   Finds the next action for a given state and model
+#
+# Inputs:
+#   Model (tuple) described above
+#   State (tuple) described above
+# 
+# Outputs:
+#   Next optimal action
+function find_action(model, state)
+    action_selected = nothing
+    maximum_q = -Inf
+    _, _, _, _, (bomb_shots_left, line_shots_left), _ = state # Parse how many shots of each type we have left
+    # Test every valid action
+    for shot_type in [bomb_shot, normal_shot, line_shot]
+        # Make sure we can take the specific shot
+        if shot_type == bomb_shot || bomb_shots_left <= 0
+            continue
+        end
+        if shot_type == line_shot || line_shots_left <= 0
+            continue
+        end
+        # Test every possible shot
+        for row in 1:board_size
+            for col in 1:board_size
+                for direction in [left_direction, right_direction, up_direction, down_direction]
+                    action = (row, col, direction, shot_type)
+                    feature = feature_concatenate_vector(state, action) # VARIABLE FEATURE VECTOR TODO
+                    q = forward(model, feature)
+                    if maximum_q < q
+                        action_selected = action
+                        maximum_q = q
+                    end
+                end
+            end
+        end
+    end
+end
+
+
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 # REINFORCEMENT LEARNING FUNCTIONS
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
@@ -754,12 +909,47 @@ end
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 
 function main()
+    # Initialize model with random weights and biases
+    model = (
+        (randn(input_size, layer_sizes[1]), randn(layer_sizes[1]), "relu"),
+        (randn(layer_sizes[1], layer_sizes[2]), randn(layer_sizes[2]), "relu"),
+        (randn(layer_sizes[2], output_size), randn(output_size), "linear"),
+    )
+
     # Iterate over all games
     for _ in 1:num_games_to_try
 
         # Generate Boards
         agents_board = initialize_board(board_size)
         opponents_board = initialize_board(board_size)
+        state = (convert_to_state_board(opponents_board), 
+                    initial_number_of_lives_left,
+                    initial_number_of_ships_left,
+                    initial_number_of_ships_left,
+                    (initial_number_of_bomb_shots, initial_number_of_line_shots),
+                    (initial_number_of_bomb_shots, initial_number_of_line_shots)
+                    )
+
+        move_index = 1
+        while !is_game_ended(agents_board, opponents_board)
+
+            # Find which action we should take dependent on the model
+            action = find_action(model, state)
+
+            new_state, agents_board, opponents_board, reward = next_state(state, action_selected, agents_board, opponents_board)
+
+            next_action = find_action(model, new_state)
+            
+            #model = backprop(model, )
+
+            move_index += 1
+
+            break
+        end
+
+        action_selected = nothing
+        maximum_q = -Inf
+        for 
 
         println("AGENT'S BOARD")
         print_board(agents_board)
@@ -779,7 +969,8 @@ function main()
         println(state)
         println(reward)
 
-        state, agents_board, opponents_board, reward = next_state(state, (2, 6, right_direction, bomb_shot), agents_board, opponents_board)
+        action = (2, 6, right_direction, bomb_shot)
+        state, agents_board, opponents_board, reward = next_state(state, action, agents_board, opponents_board)
         println("AGENT'S BOARD")
         print_board(agents_board)
 
@@ -789,18 +980,16 @@ function main()
         println(state)
         println(reward)
 
-        #move_index = 1
-        # Iterate until the game is over
-        #while !is_game_ended(agents_board, opponents_board)
+        feature = feature_concatenate_vector(state, action)
+        println(feature)
+        println(length(feature))
+        println(forward(model, feature))
 
-            # Generate Features
-            #feature_vector = nothing
-            #if feature == "concatenation"
-                #feature_vector = 
-            #elseif feature == "fourier"
-
-            #move_index += 1
-        #end
+        # Generate Features
+        #feature_vector = nothing
+        #if feature == "concatenation"
+            #feature_vector = 
+        #elseif feature == "fourier"
     end
 end
 
