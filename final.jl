@@ -570,15 +570,15 @@ function next_state(state, action, agents_board, opponents_board)
     # Calculate the reward
     #   Rewards for possible scenarios are:
     #       Agent marked a hit on an opponent's ship: +2
-    opponents_ship_hit_reward = 2
+    opponents_ship_hit_reward = 5
     #       Agent missed all opponent's ship: -0.5
-    opponents_ship_missed_reward = -0.5
+    opponents_ship_missed_reward = 0
     #       Agent hit same spot it already shot: -1 # TO IMPLEMENT
-    agent_hit_same_spot_normal = -10000
+    agent_hit_same_spot_normal = -100
     #       Agent sinks opponent's ship: +5
-    opponents_ship_sink_reward = 5
+    opponents_ship_sink_reward = 20
     #       Agent uses a special shot when it can't: -100000
-    agent_used_empty_shot = -100000
+    agent_used_empty_shot = -10000
     #       Opponent marked a hit on an agent's ship: -1
     agents_ship_hit_reward = -1
     #       Opponent missed all agent's ship: 0
@@ -795,11 +795,23 @@ function backprop(model, move_index, state, action, new_state, new_action, rewar
     return model
 end
 
+# L2 norm
+lambda = 0.008
+function l2_regularization(model::Flux.Chain, lambda::Float64)
+    regularization_term = 0.0
+    for layer in model
+        if layer isa Dense
+            regularization_term += sum(layer.weight .^ 2)
+        end
+    end
+    return lambda * regularization_term
+end
+
 # Loss function definition for the Q-learning update rule
 function loss(model, feature, reward, next_feature)
     current_Q_values = forward(model, feature)[1]
     next_Q_values = forward(model, next_feature)[1]
-    td_error = reward + gamma * next_Q_values - current_Q_values
+    td_error = reward + gamma * next_Q_values - current_Q_values + l2_regularization(model, lambda)
     return td_error
 end
 
@@ -881,7 +893,7 @@ end
 # Outputs:
 #   Next optimal action
 function find_action(model, state)
-    action_selected = get_action(rand(1:220))
+    action_selected = nothing
     maximum_q = -Inf
     _, _, _, _, (bomb_shots_left, line_shots_left), _ = state # Parse how many shots of each type we have left
 
@@ -897,6 +909,7 @@ function find_action(model, state)
         feature = feature_concatenate_vector(state, (shot_type, x, y))
         q = forward(model, feature)[1]
         if maximum_q < q
+            println("action found ", string(q), " ", (shot_type, x, y))
             action_selected = (shot_type, x, y)
             maximum_q = q
         end
@@ -955,6 +968,8 @@ function main()
             println(reward)
 
             model = backprop(model, move_index, state, action, new_state, new_action, reward)
+
+            print()
 
             state = new_state
 
