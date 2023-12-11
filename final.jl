@@ -95,7 +95,7 @@ initial_step_size = 0.005
 toggle_initial_step_size = true
 
 # The number of games we consider during training
-num_games_to_try = 1#1000
+num_games_to_try = 1000
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 # HYPERPARAMETERS
@@ -923,6 +923,8 @@ function main()
     # Iterate over all games
     for _ in 1:num_games_to_try
 
+        println("NEW GAME")
+
         # Generate Boards
         agents_board = initialize_board(board_size)
         opponents_board = initialize_board(board_size)
@@ -944,16 +946,17 @@ function main()
 
             new_action = find_action(model, new_state)
 
+            println(new_action)
+            println(reward)
+
             model = backprop(model, move_index, state, action, new_state, new_action, reward)
 
+            state = new_state
+
             move_index += 1
-
-            println("AGENT'S BOARD")
-            print_board(agents_board)
-
-            println("OPPONENT'S BOARD")
-            print_board(opponents_board)
         end
+
+        println("END GAME")
 
         #println("AGENT'S BOARD")
         #print_board(agents_board)
