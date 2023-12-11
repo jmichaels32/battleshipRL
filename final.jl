@@ -889,16 +889,20 @@ end
 # Inputs:
 #   Model (tuple) described above
 #   State (tuple) described above
+#   Action Mask (tuple) making sure we don't take the same action twice in a game
 # 
 # Outputs:
 #   Next optimal action
-function find_action(model, state)
+function find_action(model, state, action_mask)
     action_selected = nothing
     maximum_q = -Inf
     _, _, _, _, (bomb_shots_left, line_shots_left), _ = state # Parse how many shots of each type we have left
 
-
+    associated_i = 1
     for i in 1:action_size
+        if action_mask[i]
+            continue
+        end
         shot_type, x, y = get_action(i)
         if shot_type == bomb_shot && bomb_shots_left <= 0
             continue
@@ -911,9 +915,11 @@ function find_action(model, state)
         if maximum_q < q
             action_selected = (shot_type, x, y)
             maximum_q = q
+            associated_i = i
         end
     end
-    return action_selected
+    action_mask[associated_i] = true
+    return action_selected, action_mask
 end
 
 
@@ -952,16 +958,17 @@ function main()
                     (initial_number_of_bomb_shots, initial_number_of_line_shots),
                     (initial_number_of_bomb_shots, initial_number_of_line_shots)
                     )
+        action_mask = fill(false, 220)
 
         move_index = 1
         while !is_game_ended(agents_board, opponents_board)
 
             # Find which action we should take dependent on the model
-            action = find_action(model, state)
-
+            action, action_mask = find_action(model, state, action_mask)
+            
             new_state, agents_board, opponents_board, reward = next_state(state, action, agents_board, opponents_board)
 
-            new_action = find_action(model, new_state)
+            new_action, _ = find_action(model, new_state, action_mask)
 
             println(action)
             println(reward)
