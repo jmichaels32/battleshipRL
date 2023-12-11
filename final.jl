@@ -67,6 +67,8 @@ using CSV
 # Classic battleship has 10 x 10 board size
 board_size = 10
 
+action_size = 2 * (board_size ** 2) + (2 * board_size)
+
 # Fleet of ships
 # Assumed standard fleet (1x2, 1x3, 1x3, 1x4, 1x5)
 fleet = [2, 3, 3, 4, 5]
@@ -111,10 +113,14 @@ right_direction = 2
 up_direction = 3
 down_direction = 4
 
+horizontal = 1
+vertical = 2
+
 # Shot Types
 bomb_shot = -1
 normal_shot = 0
 line_shot = 1
+shot_types = [normal_shot, bomb_shot, line_shot]
 
 # Number of bomb/line shots players start with
 initial_number_of_bomb_shots = 3
@@ -347,18 +353,17 @@ end
 # 
 # Outputs:
 #   Board (n x n board) representing the updated board with the line shot
-function perform_line_shot(board, pos1, pos2, direction)
-    # Horizontal line shot
-    if direction == left_direction || direction == right_direction
+function perform_line_shot(board, direction, index)
+    if direction == horizontal: # Horizontal
         for j in 1:board_size
-            board[pos2, j] = (board[pos2, j][1], 1)
+            board[index, j] = (board[index, j][1], 1)
         end
-    # Vertical line shot
-    elseif direction == up_direction || direction == down_direction
+    elseif direction == vertical # Vertical
         for i in 1:board_size
-            board[i, pos1] = (board[i, pos1][1], 1)
+            board[i, index] = (board[i, index][1], 1)
         end
     end
+    
     return board
 end
 
@@ -414,7 +419,7 @@ function random_opponent_action(agents_board, bomb_shots_left, line_shots_left)
         agents_board = perform_bomb_shot(agents_board, rand(1:board_size), rand(1:board_size))
         bomb_shots_left -= 1
     elseif random_action == line_shot
-        agents_board = perform_line_shot(agents_board, rand(1:board_size), rand(1:board_size), rand(1:4))
+        agents_board = perform_line_shot(agents_board, rand(1:2), rand(1:board_size))
         line_shots_left -= 1
     elseif random_action == normal_shot
         random_row = rand(1:board_size)
@@ -857,6 +862,49 @@ function calculate_step_size(move_index)
     end
 end
 
+# get_action
+#
+# @param(s): 
+#   220 dimensional vector representing the action space
+# @returns: 
+#   a 3 element tuple where:
+#       - shot_type
+#           - 0 for normal shot
+#           - -1 for bomb shot
+#           - 1 for line shot
+#       - x
+#           - row if shot type normal/bomb shot
+#           - direction if shot type is line shot
+#               - 1 for horizontal
+#               - 2 for vertical
+#       - y
+#           - column if shot type normal/bomb shot
+#           - index of row/col if shot type is line shot
+#
+function get_action(action) 
+    i = action - 1
+
+    num_spaces = board_size ** 2
+    shot_type, x, y
+    if i < num_spaces  # single shot
+        shot_type = normal_shot
+        x = div(i, board_size)
+        y = mod(i, board_size)
+    elseif i < num_spaces * 2  # bomb shot
+        i -= num_spaces  
+        shot_type = bomb_shot
+        x = div(i, board_size)
+        y = mod(i, board_size)
+    else  # row shot
+        i -= num_spaces * 2
+        shot_type = line_shot
+        x = div(i, board_size)
+        y = mod(i, board_size) 
+    end
+
+    return (shot_type, x + 1, y + 1)
+end 
+
 # Functionality:
 #   Finds the next action for a given state and model
 #
@@ -870,28 +918,22 @@ function find_action(model, state)
     action_selected = nothing
     maximum_q = -Inf
     _, _, _, _, (bomb_shots_left, line_shots_left), _ = state # Parse how many shots of each type we have left
-    # Test every valid action
-    for shot_type in [bomb_shot, normal_shot, line_shot]
-        # Make sure we can take the specific shot
-        if shot_type == bomb_shot || bomb_shots_left <= 0
+
+
+    for i in 1:action_size:
+        shot_type, x, y = get_action(i)
+        if shot_type == bomb_shot && bomb_shots_left <= 0
             continue
         end
-        if shot_type == line_shot || line_shots_left <= 0
+        if shot_type == line_shot && line_shots_left <= 0
             continue
         end
-        # Test every possible shot
-        for row in 1:board_size
-            for col in 1:board_size
-                for direction in [left_direction, right_direction, up_direction, down_direction]
-                    action = (row, col, direction, shot_type)
-                    feature = feature_concatenate_vector(state, action) # VARIABLE FEATURE VECTOR TODO
-                    q = forward(model, feature)
-                    if maximum_q < q
-                        action_selected = action
-                        maximum_q = q
-                    end
-                end
-            end
+
+        feature = feature_concatenate_vector(state, action)
+        q = forward(model, feature)
+        if maximum_q < q
+            action_selected = action
+            maximum_q = q
         end
     end
 end
