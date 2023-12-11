@@ -3,6 +3,8 @@ using DataFrames
 using Random
 using CSV
 using Flux
+using StatsBase
+using Plots
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 # DESCRIPTIONS
@@ -77,7 +79,7 @@ fleet = [2, 3, 3, 4, 5]
 # Discount Factor
 # Since we can never return to a state, we'll never have loops 
 # Thus, discount factor of 1 is fine
-gamma = 1
+gamma = 0.9
 
 # Which feature vector to use
 # Possibilities include 'concatenation', 'fourier'
@@ -88,14 +90,14 @@ feature = "concatenation"
 maxFourier = 20 
 
 # Initial step size
-initial_step_size = 0.005
+initial_step_size = 0.0005
 
 # Toggle initial step size toggles off calculate_step_size
 # True keeps step size constant at initial_step_size
 toggle_initial_step_size = true
 
 # The number of games we consider during training
-num_games_to_try = 1000
+num_games_to_try = 500
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 # HYPERPARAMETERS
@@ -135,6 +137,8 @@ initial_number_of_ships_left = length(fleet)
 input_size = board_size * board_size + 7 + 3 # State + Action sizes (described above)
 output_size = 1 # Action size
 layer_sizes = [200, 100]
+
+model_type = 1
 
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
@@ -323,15 +327,15 @@ end
 #   
 # Inputs:
 #   Board (n x n board) capturing the board state
-#   Position 1 (integer) is the column of the bomb shot
-#   Position 2 (integer) is the row of the bomb shot
+#   Position 1 (integer) is the row of the bomb shot
+#   Position 2 (integer) is the column of the bomb shot
 # 
 # Outputs:
 #   Board (n x n board) representing the updated board with the bomb shot
 function perform_bomb_shot(board, pos1, pos2)
     # Define the range for the bomb shot
-    row_range = max(1, pos2 - 1):min(board_size, pos2 + 1)
-    col_range = max(1, pos1 - 1):min(board_size, pos1 + 1)
+    row_range = max(1, pos1 - 1):min(board_size, pos1 + 1)
+    col_range = max(1, pos2 - 1):min(board_size, pos2 + 1)
 
     # Apply the bomb shot to the 3x3 area
     for i in row_range
@@ -413,20 +417,33 @@ end
 #       Updated agent's board with opponent's random action
 #       Integer representing how many bomb shots are left
 #       Integer representing how many line shots are left
-function random_opponent_action(agents_board, bomb_shots_left, line_shots_left)
-    random_action = rand([bomb_shot, line_shot, normal_shot])
+function random_opponent_action(agents_board, bomb_shots_left, line_shots_left, opp_actions_remaining)
 
-    if random_action == bomb_shot && bomb_shots_left > 0
-        agents_board = perform_bomb_shot(agents_board, rand(1:board_size), rand(1:board_size))
-        bomb_shots_left -= 1
-    elseif random_action == line_shot && line_shots_left > 0
-        agents_board = perform_line_shot(agents_board, rand(1:2), rand(1:board_size))
-        line_shots_left -= 1
-    elseif random_action == normal_shot
-        random_row = rand(1:board_size)
-        random_col = rand(1:board_size)
-        agents_board[random_row, random_col] = (agents_board[random_row, random_col][1], 1)
+    action_performed = false
+    action = nothing
+    while !action_performed
+        available_actions = findall(opp_actions_remaining)
+        #println(available_actions)
+        random_action = sample(available_actions)
+        opp_actions_remaining[random_action] = false
+        action = get_action(random_action)
+        if action[1] == bomb_shot && bomb_shots_left > 0
+            agents_board = perform_bomb_shot(agents_board, action[2], action[3])
+            action_performed = true
+            bomb_shots_left -= 1
+        elseif action[1] == line_shot && line_shots_left > 0
+            agents_board = perform_line_shot(agents_board, action[2], action[3])
+            action_performed = true
+            line_shots_left -= 1
+        elseif action[1] == normal_shot
+            random_row = action[2]
+            random_col = action[3]
+            agents_board[random_row, random_col] = (agents_board[random_row, random_col][1], 1)
+            action_performed = true
+        end
     end
+
+    #println(action)
 
     return agents_board, bomb_shots_left, line_shots_left
 end
@@ -523,7 +540,7 @@ end
 #   New Agent's Board (n x n board) capturing the agent's board
 #   New Opponent's Board (n x n board) capturing the Opponent's board
 #   Reward for this particular action
-function next_state(state, action, agents_board, opponents_board)
+function next_state(state, action, agents_board, opponents_board, opp_actions_remaining)
     # Gather all information from the state/action
     agents_shots_left = (initial_number_of_bomb_shots, initial_number_of_line_shots)
     opponents_shots_left = (initial_number_of_bomb_shots, initial_number_of_line_shots)
@@ -552,7 +569,7 @@ function next_state(state, action, agents_board, opponents_board)
     end
 
     # Opponent's play
-    agents_board, opponents_bomb_shots_left, opponents_line_shots_left = random_opponent_action(agents_board, opponents_bomb_shots_left, opponents_line_shots_left)
+    agents_board, opponents_bomb_shots_left, opponents_line_shots_left = random_opponent_action(agents_board, opponents_bomb_shots_left, opponents_line_shots_left, opp_actions_remaining)
 
     # Convert updated agents_board, opponents_board to state
     new_agents_lives_left = lives_left(agents_board)
@@ -574,7 +591,7 @@ function next_state(state, action, agents_board, opponents_board)
     #       Agent missed all opponent's ship: -0.5
     opponents_ship_missed_reward = 0
     #       Agent hit same spot it already shot: -1 # TO IMPLEMENT
-    agent_hit_same_spot_normal = -100
+    agent_hit_same_spot_normal = -1
     #       Agent sinks opponent's ship: +5
     opponents_ship_sink_reward = 20
     #       Agent uses a special shot when it can't: -100000
@@ -650,7 +667,7 @@ function is_game_ended(agents_board, opponents_board)
         end
     end
 
-    return agents_board_finished || opponents_board_finished
+    return agents_board_finished, opponents_board_finished, agents_board_finished || opponents_board_finished
 end
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
@@ -770,6 +787,8 @@ end
 # 
 # Outputs:
 #   Updated model with new weights after performing backpropagation
+
+optim = Flux.Optimise.Adam(0.001, (0.9, 0.999), 1.0e-8)
 function backprop(model, move_index, state, action, new_state, new_action, reward)
     # Calculate step size
     eta = calculate_step_size(move_index)
@@ -785,21 +804,21 @@ function backprop(model, move_index, state, action, new_state, new_action, rewar
     grads = Flux.gradient(() -> loss(model, feature, reward, next_feature), Flux.params(model))
 
     """
-    # Update the model's parameters
-    for p in Flux.params(model)
-        p.data .+= eta .* grads[p]
-    end
-    """
-
     for p in Flux.params(model)
         delta_p = grads[p]  # Gradient for this parameter
         p .+= eta * delta_p  # Update parameter
     end
+    """
+
+    Flux.Optimise.update!(optim, Flux.params(model), grads)
+
+
+
     return model
 end
 
 # L2 norm
-lambda = 0.008
+lambda = 0.1
 function l2_regularization(model::Flux.Chain, lambda::Float64)
     regularization_term = 0.0
     for layer in model
@@ -817,7 +836,7 @@ function loss(model, feature, reward, next_feature)
     if next_feature != nothing
         next_Q_values = forward(model, next_feature)[1]
     end
-    td_error = reward + gamma * next_Q_values - current_Q_values + l2_regularization(model, lambda)
+    td_error = (reward + gamma * next_Q_values - current_Q_values)^2 + l2_regularization(model, lambda)
     return td_error
 end
 
@@ -899,14 +918,14 @@ end
 # 
 # Outputs:
 #   Next optimal action
-function find_action(model, state, action_mask, is_cur)
+function find_action(model, state, agent_actions_remaining, is_cur)
     action_selected = nothing
     maximum_q = -Inf
     _, _, _, _, (bomb_shots_left, line_shots_left), _ = state # Parse how many shots of each type we have left
     
     associated_i = 1
     for i in 1:action_size
-        if action_mask[i]
+        if !agent_actions_remaining[i]
             continue
         end
         shot_type, x, y = get_action(i)
@@ -926,7 +945,9 @@ function find_action(model, state, action_mask, is_cur)
     end
     #println("Max Q ", maximum_q, " ", action_selected)
     if is_cur
-        action_mask[associated_i] = true
+        agent_actions_remaining[associated_i] = false
+        #println("Max Q ", maximum_q, " ", action_selected)
+        #println()
     end
     return action_selected
 end
@@ -944,20 +965,140 @@ end
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 
 function main()
+    if model_type == 0
 
-    # Initialize model using Flux
-    model = Chain(
-        Dense(input_size, layer_sizes[1], relu),
-        Dense(layer_sizes[1], layer_sizes[2], relu),
-        Dense(layer_sizes[2], output_size)
-    )
+    end
+    if model_type == 1
+        # Initialize model using Flux
+        model = Chain(
+            Dense(input_size, layer_sizes[1], relu),
+            Dense(layer_sizes[1], layer_sizes[2], relu),
+            Dense(layer_sizes[2], output_size)
+        )
 
-    # Iterate over all games
-    for _ in 1:num_games_to_try
+        agent_wins = zeros(Int8, num_games_to_try)
+        opp_wins = zeros(Int8, num_games_to_try)
+        losses = zeros(Float64, num_games_to_try)
 
-        println("NEW GAME")
+        # Iterate over all games
+        for iter in 1:num_games_to_try
 
-        # Generate Boards
+            println(iter)
+
+            #println("NEW GAME")
+
+            # Generate Boards
+            agents_board = initialize_board(board_size)
+            opponents_board = initialize_board(board_size)
+            state = (convert_to_state_board(opponents_board), 
+                        initial_number_of_lives_left,
+                        initial_number_of_ships_left,
+                        initial_number_of_ships_left,
+                        (initial_number_of_bomb_shots, initial_number_of_line_shots),
+                        (initial_number_of_bomb_shots, initial_number_of_line_shots)
+                        )
+            agent_actions_remaining = fill(true, 220)
+
+            opp_actions_remaining = fill(true, 220)
+
+            move_index = 1
+
+            count = 0
+            avg_loss = 0
+            while !is_game_ended(agents_board, opponents_board)[3]
+
+                # Find which action we should take dependent on the model
+                action = find_action(model, state, agent_actions_remaining, true)
+                
+                new_state, agents_board, opponents_board, reward = next_state(state, action, agents_board, opponents_board, opp_actions_remaining)
+
+                #println(action)
+                #println(opponents_board)
+                #println(agents_board)
+                #println()
+                a, o, _ = is_game_ended(agents_board, opponents_board)
+                if a || o
+                    model = backprop(model, move_index, state, action, new_state, nothing, 1000)
+                    if a
+                        println("OPPONENT WIN")
+                        opp_wins[iter] = 1
+                    elseif o
+                        println("AGENT WIN")
+                        agent_wins[iter] = 1
+                    end
+                    break
+                end
+
+                new_action = find_action(model, new_state, agent_actions_remaining, false)
+
+                #println(action)
+                #println(reward)
+
+                model = backprop(model, move_index, state, action, new_state, new_action, reward)
+
+                count += 1
+                avg_loss += loss(model, feature_concatenate_vector(state, action), reward, feature_concatenate_vector(new_state, new_action))
+                #println("Loss: ", loss(model, feature_concatenate_vector(state, action), reward, feature_concatenate_vector(new_state, new_action)))
+                state = new_state
+
+
+
+                move_index += 1
+            end
+
+            avg_loss /= count
+            losses[iter] = avg_loss
+            println("Loss: ", avg_loss)
+
+
+            #println("END GAME")
+
+            #println("AGENT'S BOARD")
+            #print_board(agents_board)
+
+            #println("OPPONENT'S BOARD")
+            #print_board(opponents_board)
+
+            #println(is_game_ended(agents_board, opponents_board))
+
+            #state, agents_board, opponents_board, reward = next_state(nothing, (2, 6, left_direction, line_shot), agents_board, opponents_board)
+            #println("AGENT'S BOARD")
+            #print_board(agents_board)
+
+            #println("OPPONENT'S BOARD")
+            #print_board(opponents_board)
+
+            #println(state)
+            #println(reward)
+
+            #action = (2, 6, right_direction, bomb_shot)
+            #state, agents_board, opponents_board, reward = next_state(state, action, agents_board, opponents_board)
+            #println("AGENT'S BOARD")
+            #print_board(agents_board)
+
+            #println("OPPONENT'S BOARD")
+            #print_board(opponents_board)
+
+            #println(state)
+            #println(reward)
+
+            #feature = feature_concatenate_vector(state, action)
+            #println(feature)
+            #println(length(feature))
+            #println(forward(model, feature))
+
+            # Generate Features
+            #feature_vector = nothing
+            #if feature == "concatenation"
+                #feature_vector = 
+            #elseif feature == "fourier"
+        end
+
+        println("Overall: ", sum(agent_wins), " / ", sum(agent_wins) + sum(opp_wins))
+        for i in 1:100:num_games_to_try
+            println(i, "-", i + 99, ": ", sum(agent_wins[i:i + 99]), " / 100")
+        end
+
         agents_board = initialize_board(board_size)
         opponents_board = initialize_board(board_size)
         state = (convert_to_state_board(opponents_board), 
@@ -966,78 +1107,20 @@ function main()
                     initial_number_of_ships_left,
                     (initial_number_of_bomb_shots, initial_number_of_line_shots),
                     (initial_number_of_bomb_shots, initial_number_of_line_shots)
-                    )
-        action_mask = fill(false, 220)
+                )
 
-        move_index = 1
-        while !is_game_ended(agents_board, opponents_board)
 
-            # Find which action we should take dependent on the model
-            action = find_action(model, state, action_mask, true)
-            
-            new_state, agents_board, opponents_board, reward = next_state(state, action, agents_board, opponents_board)
-
-            if is_game_ended(agents_board, opponents_board)
-                model = backprop(model, move_index, state, action, new_state, nothing, 1000)
-                break
-            end
-
-            new_action = find_action(model, new_state, action_mask, false)
-
-            #println(action)
-            #println(reward)
-
-            model = backprop(model, move_index, state, action, new_state, new_action, reward)
-
-            println("Loss: ", loss(model, feature_concatenate_vector(state, action), reward, feature_concatenate_vector(new_state, new_action)))
-
-            state = new_state
-
-            move_index += 1
+        
+        q_start = zeros(Float64, 220)
+        for action in 1:220
+            shot_type, x, y = get_action(action)
+            feature = feature_concatenate_vector(state, (shot_type, x, y))
+            q = forward(model, feature)[1]
+            q_start[action] = q
         end
-
-
-        println("END GAME")
-
-        #println("AGENT'S BOARD")
-        #print_board(agents_board)
-
-        #println("OPPONENT'S BOARD")
-        #print_board(opponents_board)
-
-        #println(is_game_ended(agents_board, opponents_board))
-
-        #state, agents_board, opponents_board, reward = next_state(nothing, (2, 6, left_direction, line_shot), agents_board, opponents_board)
-        #println("AGENT'S BOARD")
-        #print_board(agents_board)
-
-        #println("OPPONENT'S BOARD")
-        #print_board(opponents_board)
-
-        #println(state)
-        #println(reward)
-
-        #action = (2, 6, right_direction, bomb_shot)
-        #state, agents_board, opponents_board, reward = next_state(state, action, agents_board, opponents_board)
-        #println("AGENT'S BOARD")
-        #print_board(agents_board)
-
-        #println("OPPONENT'S BOARD")
-        #print_board(opponents_board)
-
-        #println(state)
-        #println(reward)
-
-        #feature = feature_concatenate_vector(state, action)
-        #println(feature)
-        #println(length(feature))
-        #println(forward(model, feature))
-
-        # Generate Features
-        #feature_vector = nothing
-        #if feature == "concatenation"
-            #feature_vector = 
-        #elseif feature == "fourier"
+        println(q_start)
+        println()
+        print(losses)
     end
 end
 
