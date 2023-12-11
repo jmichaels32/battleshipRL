@@ -897,7 +897,7 @@ function find_action(model, state, action_mask)
     action_selected = nothing
     maximum_q = -Inf
     _, _, _, _, (bomb_shots_left, line_shots_left), _ = state # Parse how many shots of each type we have left
-
+    
     associated_i = 1
     for i in 1:action_size
         if action_mask[i]
@@ -918,6 +918,7 @@ function find_action(model, state, action_mask)
             associated_i = i
         end
     end
+    println("Max Q", maximum_q)
     action_mask[associated_i] = true
     return action_selected, action_mask
 end
@@ -964,23 +965,33 @@ function main()
         while !is_game_ended(agents_board, opponents_board)
 
             # Find which action we should take dependent on the model
-            action, action_mask = find_action(model, state, action_mask)
+            action, action_mask = find_action(model, state, copy(action_mask))
             
             new_state, agents_board, opponents_board, reward = next_state(state, action, agents_board, opponents_board)
 
-            new_action, _ = find_action(model, new_state, action_mask)
+            if !(true in action_mask)
+                break
+            end
+
+            new_action, _ = find_action(model, new_state, copy(action_mask))
 
             println(action)
             println(reward)
 
+            if is_game_ended(agents_board, opponents_board)
+                model = backprop(model, move_index, state, action, new_state, new_action, 1000)
+                break
+            end
+
             model = backprop(model, move_index, state, action, new_state, new_action, reward)
 
-            println(state)
+            #println(state)
 
             state = new_state
 
             move_index += 1
         end
+
 
         println("END GAME")
 
