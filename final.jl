@@ -535,19 +535,19 @@ function next_state(state, action, agents_board, opponents_board)
         _, agents_lives_left, agents_ships_left, opponents_ships_left, agents_shots_left, opponents_shots_left = state
         opponents_lives_left = lives_left(opponents_board) # Only used in reward
     end
-    action_row, action_col, action_direction, action_type = action
+    action_type, x, y = action
     agents_bomb_shots_left, agents_line_shots_left = agents_shots_left
     opponents_bomb_shots_left, opponents_line_shots_left = opponents_shots_left
 
     # Agent's play
     if action_type == bomb_shot
-        opponents_board = perform_bomb_shot(opponents_board, action_row, action_col)
+        opponents_board = perform_bomb_shot(opponents_board, x, y)
         agents_bomb_shots_left -= 1
     elseif action_type == line_shot
-        opponents_board = perform_line_shot(opponents_board, action_row, action_col, action_direction)
+        opponents_board = perform_line_shot(opponents_board, x, y)
         agents_line_shots_left -= 1
     elseif action_type == normal_shot
-        opponents_board[action_row, action_col] = (opponents_board[action_row, action_col][1], 1)
+        opponents_board[x, y] = (opponents_board[x, y][1], 1)
     end
 
     # Opponent's play
