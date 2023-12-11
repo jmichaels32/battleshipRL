@@ -881,7 +881,7 @@ end
 # Outputs:
 #   Next optimal action
 function find_action(model, state)
-    action_selected = nothing
+    action_selected = get_action(rand(1:220))
     maximum_q = -Inf
     _, _, _, _, (bomb_shots_left, line_shots_left), _ = state # Parse how many shots of each type we have left
 
