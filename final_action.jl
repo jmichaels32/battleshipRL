@@ -113,6 +113,9 @@ right_direction = 2
 up_direction = 3
 down_direction = 4
 
+horizontal = 1
+vertical = 2
+
 # Shot Types
 bomb_shot = -1
 normal_shot = 0
@@ -350,18 +353,17 @@ end
 # 
 # Outputs:
 #   Board (n x n board) representing the updated board with the line shot
-function perform_line_shot(board, pos1, pos2, direction)
-    # Horizontal line shot
-    if direction == left_direction || direction == right_direction
+function perform_line_shot(board, direction, index)
+    if direction == horizontal: # Horizontal
         for j in 1:board_size
-            board[pos2, j] = (board[pos2, j][1], 1)
+            board[index, j] = (board[index, j][1], 1)
         end
-    # Vertical line shot
-    elseif direction == up_direction || direction == down_direction
+    elseif direction == vertical # Vertical
         for i in 1:board_size
-            board[i, pos1] = (board[i, pos1][1], 1)
+            board[i, index] = (board[i, index][1], 1)
         end
     end
+    
     return board
 end
 
@@ -417,7 +419,7 @@ function random_opponent_action(agents_board, bomb_shots_left, line_shots_left)
         agents_board = perform_bomb_shot(agents_board, rand(1:board_size), rand(1:board_size))
         bomb_shots_left -= 1
     elseif random_action == line_shot
-        agents_board = perform_line_shot(agents_board, rand(1:board_size), rand(1:board_size), rand(1:4))
+        agents_board = perform_line_shot(agents_board, rand(1:2), rand(1:board_size))
         line_shots_left -= 1
     elseif random_action == normal_shot
         random_row = rand(1:board_size)
@@ -867,14 +869,14 @@ end
 # @returns: 
 #   a 3 element tuple where:
 #       - shot_type
-#           - "n" for normal shot
-#           - "b" for bomb shot
-#           - "l" for line shot
+#           - 0 for normal shot
+#           - -1 for bomb shot
+#           - 1 for line shot
 #       - x
 #           - row if shot type normal/bomb shot
 #           - direction if shot type is line shot
-#               - 0 for horizontal
-#               - 1 for vertical
+#               - 1 for horizontal
+#               - 2 for vertical
 #       - y
 #           - column if shot type normal/bomb shot
 #           - index of row/col if shot type is line shot
