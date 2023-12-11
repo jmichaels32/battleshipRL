@@ -574,7 +574,7 @@ function next_state(state, action, agents_board, opponents_board)
     #       Agent missed all opponent's ship: -0.5
     opponents_ship_missed_reward = -0.5
     #       Agent hit same spot it already shot: -1 # TO IMPLEMENT
-    #agent_hit_same_spot = -1
+    agent_hit_same_spot_normal = -10000
     #       Agent sinks opponent's ship: +5
     opponents_ship_sink_reward = 5
     #       Agent uses a special shot when it can't: -100000
@@ -612,6 +612,11 @@ function next_state(state, action, agents_board, opponents_board)
     # Ran out of special shots
     if agents_bomb_shots_left < 0 || agents_line_shots_left < 0 
         reward += agent_used_empty_shot
+    end
+
+    # Agent aims for the same spot
+    if action_type == normal_shot && opponents_board[x, y][2] == 1
+        reward += agent_hit_same_spot_normal
     end
 
     return state, agents_board, opponents_board, reward
