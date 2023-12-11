@@ -132,7 +132,7 @@ initial_number_of_lives_left = sum(fleet)
 initial_number_of_ships_left = length(fleet)
 
 # Model input/output and hidden sizes
-input_size = board_size * board_size + 7 + 4 # State + Action sizes (described above)
+input_size = board_size * board_size + 7 + 3 # State + Action sizes (described above)
 output_size = 1 # Action size
 layer_sizes = [200, 100]
 
@@ -776,18 +776,24 @@ function backprop(model, move_index, state, action, new_state, new_action, rewar
     # Perform the backward pass using Flux's gradient function
     grads = Flux.gradient(() -> loss(model, feature, reward, next_feature), Flux.params(model))
 
+    """
     # Update the model's parameters
-    for p in params(model)
+    for p in Flux.params(model)
         p.data .+= eta .* grads[p]
     end
+    """
 
+    for p in Flux.params(model)
+        delta_p = grads[p]  # Gradient for this parameter
+        p .+= eta * delta_p  # Update parameter
+    end
     return model
 end
 
 # Loss function definition for the Q-learning update rule
 function loss(model, feature, reward, next_feature)
-    current_Q_values = forward(model, feature)
-    next_Q_values = forward(model, next_feature)
+    current_Q_values = forward(model, feature)[1]
+    next_Q_values = forward(model, next_feature)[1]
     td_error = reward + gamma * next_Q_values - current_Q_values
     return td_error
 end
@@ -884,7 +890,7 @@ function find_action(model, state)
             continue
         end
         feature = feature_concatenate_vector(state, (shot_type, x, y))
-        q = forward(model, feature)
+        q = forward(model, feature)[1]
         if maximum_q < q
             action_selected = (shot_type, x, y)
             maximum_q = q
@@ -906,6 +912,7 @@ end
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 
 function main()
+
     # Initialize model using Flux
     model = Chain(
         Dense(input_size, layer_sizes[1], relu),
