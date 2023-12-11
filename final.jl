@@ -857,6 +857,47 @@ function calculate_step_size(move_index)
     end
 end
 
+# get_action
+#
+# @param(s): 
+#   220 dimensional vector representing the action space
+# @returns: 
+#   a 3 element tuple where:
+#       - shot_type
+#           - "s" for single shot
+#           - "b" for bomb shot
+#           - "l" for line shot
+#       - x
+#           - row if shot type single/bomb shot
+#           - direction if shot type is line shot
+#               - 0 for horizontal
+#               - 1 for vertical
+#       - y
+#           - column if shot type single/bomb shot
+#           - index of row/col if shot type is line shot
+#
+function get_action(action) 
+    i = action
+
+    if i < 100  # single shot
+        shot_type = "s"
+        x = div(i, 10)
+        y = mod(i, 10)
+    elseif i < 200  # bomb shot
+        i -= 100  
+        shot_type = "b"
+        x = div(i, 10)
+        y = mod(i, 10)
+    else  # row shot
+        i -= 200
+        shot_type = "l"
+        x = div(i, 10)
+        y = mod(i, 10) 
+    end
+
+    return (shot_type, x, y)
+end 
+
 # Functionality:
 #   Finds the next action for a given state and model
 #
