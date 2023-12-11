@@ -2,6 +2,7 @@ using LinearAlgebra
 using DataFrames
 using Random
 using CSV
+using Flux
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 # DESCRIPTIONS
@@ -599,7 +600,7 @@ function next_state(state, action, agents_board, opponents_board)
 
     if agents_lives_left - new_agents_lives_left == 0
         # Opponent missed our ship
-        reward += agents_missed_hit_reward 
+        reward += agents_ship_missed_reward 
     else 
         # Opponent hit our ship
         reward += agents_ship_hit_reward * (agents_lives_left - new_agents_lives_left)
@@ -726,42 +727,24 @@ end
 
 # Functionality:
 #   Forward pass of predictor function (calculates Q)
-#   Uses feature vector to make prediction 
+#   Uses feature vector to make prediction with Flux model
 #
 # Inputs:
-#   Model (tuple) described above
+#   Model (Flux model) described above
 #   Feature (vector) described above
 #       Can be any of the options defined above
 # 
 # Outputs:
 #   Predicted Q given a state, action and the current model's weights
 function forward(model, feature)
-    # Initialize input as the feature vector
-    input = feature
-    
-    # Iterate over each layer in the model
-    for (weights, bias, activation) in model
-        # Calculate the pre-activation values with the transpose of the weights
-        pre_activation = (weights') * input .+ bias
-        
-        # Apply activation function
-        if activation == "relu"
-            input = max.(0, pre_activation)
-        elseif activation == "linear"
-            input = pre_activation
-        else
-            error("Unknown activation function: $activation")
-        end
-    end
-    
-    # The final input is the output of the last layer, which is the predicted Q values
-    return input
+    # Use the model to perform a forward pass and predict Q values
+    return model(feature)
 end
 
 # Functionality:
 #   Backpropagation of our predictor function (updating weights)
 #   Uses Q-learning update function with function approximation given by:
-#       w <- w - eta * ( Q(s,a) - (r - gamma * V(s',a'))) * gradient where:
+#       w <- w - eta * ( Q(s,a) - (r + gamma * V(s',a'))) * gradient where:
 #           w : weights
 #           eta : step size / learning rate
 #               Given by calculate_step_size below
@@ -772,7 +755,7 @@ end
 #           gamma : discount factor
 #           V(s',a') : V value (future value) for future state s' and action a'
 #               Given by forward() defined above
-#           gradient : Gradient/backpropogation through the model
+#           gradient : Gradient/backpropagation through the model
 #
 # Inputs:
 #   Model (tuple) described above
@@ -782,59 +765,32 @@ end
 #   Move Index (integer) for use in calculating the step size
 # 
 # Outputs:
-#   Predicted Q given a state, action and the current model's weights
-function backprop(model, feature, reward, move_index) 
+#   Updated model with new weights after performing backpropagation
+function backprop(model, move_index, state, action, new_state, new_action, reward)
     # Calculate step size
     eta = calculate_step_size(move_index)
 
-    # Forward pass to get the current Q-values
+    # Concatenate state and action to form the feature vector
+    feature = feature_concatenate_vector(state, action)
+    next_feature = feature_concatenate_vector(new_state, new_action)
+
+    # Perform the backward pass using Flux's gradient function
+    grads = Flux.gradient(() -> loss(model, feature, reward, next_feature), Flux.params(model))
+
+    # Update the model's parameters
+    for p in params(model)
+        p.data .+= eta .* grads[p]
+    end
+
+    return model
+end
+
+# Loss function definition for the Q-learning update rule
+function loss(model, feature, reward, next_feature)
     current_Q_values = forward(model, feature)
-
-    # Compute the TD error using the reward
-    td_error = reward - current_Q_values
-
-    # Initialize gradients for each layer
-    gradients = [(zeros(size(layer[1])), zeros(size(layer[2]))) for layer in model]
-
-    # Backward pass to compute gradients
-    delta = td_error
-    for i in length(model):-1:1
-        weights, biases, activation = model[i]
-        input_to_layer = i == 1 ? feature : forward(model[1:i-1], feature)
-        
-        # Compute gradient for weights and biases
-        # This is a simplified version; you'll need to compute the actual gradients based on the activation function
-        grad_weights = input_to_layer * delta'
-        grad_biases = delta
-
-        # Store gradients
-        gradients[i] = (grad_weights, grad_biases)
-
-        # Compute delta for previous layer (if not the first layer)
-        if i > 1
-            delta = weights * delta
-            # Apply derivative of activation function if necessary
-            if model[i-1][3] == "relu"
-                delta = delta .* (input_to_layer .> 0)
-            end
-        end
-    end
-
-    # Update model parameters
-    new_model = []
-    for i in 1:length(model)
-        weights, biases, activation = model[i]
-        grad_weights, grad_biases = gradients[i]
-
-        # Update weights and biases
-        new_weights = weights - eta * grad_weights
-        new_biases = biases - eta * grad_biases
-
-        # Append updated layer to new model
-        push!(new_model, (new_weights, new_biases, activation))
-    end
-
-    return new_model
+    next_Q_values = forward(model, next_feature)
+    td_error = reward + gamma * next_Q_values - current_Q_values
+    return td_error
 end
 
 # --------------------------------------------------------------------
@@ -928,7 +884,6 @@ function find_action(model, state)
         if shot_type == line_shot && line_shots_left <= 0
             continue
         end
-
         feature = feature_concatenate_vector(state, action)
         q = forward(model, feature)
         if maximum_q < q
@@ -936,6 +891,7 @@ function find_action(model, state)
             maximum_q = q
         end
     end
+    return action_selected
 end
 
 
@@ -951,11 +907,11 @@ end
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 
 function main()
-    # Initialize model with random weights and biases
-    model = (
-        (randn(input_size, layer_sizes[1]), randn(layer_sizes[1]), "relu"),
-        (randn(layer_sizes[1], layer_sizes[2]), randn(layer_sizes[2]), "relu"),
-        (randn(layer_sizes[2], output_size), randn(output_size), "linear"),
+    # Initialize model using Flux
+    model = Chain(
+        Dense(input_size, layer_sizes[1], relu),
+        Dense(layer_sizes[1], layer_sizes[2], relu),
+        Dense(layer_sizes[2], output_size)
     )
 
     # Iterate over all games
@@ -978,54 +934,54 @@ function main()
             # Find which action we should take dependent on the model
             action = find_action(model, state)
 
-            new_state, agents_board, opponents_board, reward = next_state(state, action_selected, agents_board, opponents_board)
+            new_state, agents_board, opponents_board, reward = next_state(state, action, agents_board, opponents_board)
 
-            next_action = find_action(model, new_state)
-            
-            #model = backprop(model, )
+            new_action = find_action(model, new_state)
+
+            model = backprop(model, move_index, state, action, new_state, new_action, reward)
 
             move_index += 1
 
-            break
+            println("AGENT'S BOARD")
+            print_board(agents_board)
+
+            println("OPPONENT'S BOARD")
+            print_board(opponents_board)
         end
 
-        action_selected = nothing
-        maximum_q = -Inf
-        for 
+        #println("AGENT'S BOARD")
+        #print_board(agents_board)
 
-        println("AGENT'S BOARD")
-        print_board(agents_board)
+        #println("OPPONENT'S BOARD")
+        #print_board(opponents_board)
 
-        println("OPPONENT'S BOARD")
-        print_board(opponents_board)
+        #println(is_game_ended(agents_board, opponents_board))
 
-        println(is_game_ended(agents_board, opponents_board))
+        #state, agents_board, opponents_board, reward = next_state(nothing, (2, 6, left_direction, line_shot), agents_board, opponents_board)
+        #println("AGENT'S BOARD")
+        #print_board(agents_board)
 
-        state, agents_board, opponents_board, reward = next_state(nothing, (2, 6, left_direction, line_shot), agents_board, opponents_board)
-        println("AGENT'S BOARD")
-        print_board(agents_board)
+        #println("OPPONENT'S BOARD")
+        #print_board(opponents_board)
 
-        println("OPPONENT'S BOARD")
-        print_board(opponents_board)
+        #println(state)
+        #println(reward)
 
-        println(state)
-        println(reward)
+        #action = (2, 6, right_direction, bomb_shot)
+        #state, agents_board, opponents_board, reward = next_state(state, action, agents_board, opponents_board)
+        #println("AGENT'S BOARD")
+        #print_board(agents_board)
 
-        action = (2, 6, right_direction, bomb_shot)
-        state, agents_board, opponents_board, reward = next_state(state, action, agents_board, opponents_board)
-        println("AGENT'S BOARD")
-        print_board(agents_board)
+        #println("OPPONENT'S BOARD")
+        #print_board(opponents_board)
 
-        println("OPPONENT'S BOARD")
-        print_board(opponents_board)
+        #println(state)
+        #println(reward)
 
-        println(state)
-        println(reward)
-
-        feature = feature_concatenate_vector(state, action)
-        println(feature)
-        println(length(feature))
-        println(forward(model, feature))
+        #feature = feature_concatenate_vector(state, action)
+        #println(feature)
+        #println(length(feature))
+        #println(forward(model, feature))
 
         # Generate Features
         #feature_vector = nothing
