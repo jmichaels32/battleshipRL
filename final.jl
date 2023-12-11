@@ -776,7 +776,10 @@ function backprop(model, move_index, state, action, new_state, new_action, rewar
 
     # Concatenate state and action to form the feature vector
     feature = feature_concatenate_vector(state, action)
-    next_feature = feature_concatenate_vector(new_state, new_action)
+    next_feature = nothing
+    if new_action != nothing
+        next_feature = feature_concatenate_vector(new_state, new_action)
+    end
 
     # Perform the backward pass using Flux's gradient function
     grads = Flux.gradient(() -> loss(model, feature, reward, next_feature), Flux.params(model))
@@ -809,8 +812,11 @@ end
 
 # Loss function definition for the Q-learning update rule
 function loss(model, feature, reward, next_feature)
+    next_Q_values = 0
     current_Q_values = forward(model, feature)[1]
-    next_Q_values = forward(model, next_feature)[1]
+    if next_feature != nothing
+        next_Q_values = forward(model, next_feature)[1]
+    end
     td_error = reward + gamma * next_Q_values - current_Q_values + l2_regularization(model, lambda)
     return td_error
 end
@@ -893,7 +899,7 @@ end
 # 
 # Outputs:
 #   Next optimal action
-function find_action(model, state, action_mask)
+function find_action(model, state, action_mask, is_cur)
     action_selected = nothing
     maximum_q = -Inf
     _, _, _, _, (bomb_shots_left, line_shots_left), _ = state # Parse how many shots of each type we have left
@@ -918,9 +924,11 @@ function find_action(model, state, action_mask)
             associated_i = i
         end
     end
-    println("Max Q", maximum_q)
-    action_mask[associated_i] = true
-    return action_selected, action_mask
+    #println("Max Q ", maximum_q, " ", action_selected)
+    if is_cur
+        action_mask[associated_i] = true
+    end
+    return action_selected
 end
 
 
@@ -965,27 +973,23 @@ function main()
         while !is_game_ended(agents_board, opponents_board)
 
             # Find which action we should take dependent on the model
-            action, action_mask = find_action(model, state, copy(action_mask))
+            action = find_action(model, state, action_mask, true)
             
             new_state, agents_board, opponents_board, reward = next_state(state, action, agents_board, opponents_board)
 
-            if !(true in action_mask)
-                break
-            end
-
-            new_action, _ = find_action(model, new_state, copy(action_mask))
-
-            println(action)
-            println(reward)
-
             if is_game_ended(agents_board, opponents_board)
-                model = backprop(model, move_index, state, action, new_state, new_action, 1000)
+                model = backprop(model, move_index, state, action, new_state, nothing, 1000)
                 break
             end
+
+            new_action = find_action(model, new_state, action_mask, false)
+
+            #println(action)
+            #println(reward)
 
             model = backprop(model, move_index, state, action, new_state, new_action, reward)
 
-            #println(state)
+            println("Loss: ", loss(model, feature_concatenate_vector(state, action), reward, feature_concatenate_vector(new_state, new_action)))
 
             state = new_state
 
