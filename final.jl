@@ -68,7 +68,7 @@ using Flux
 # Classic battleship has 10 x 10 board size
 board_size = 10
 
-action_size = 2 * (board_size ** 2) + (2 * board_size)
+action_size = 2 * (board_size ^ 2) + (2 * board_size)
 
 # Fleet of ships
 # Assumed standard fleet (1x2, 1x3, 1x3, 1x4, 1x5)
@@ -355,7 +355,7 @@ end
 # Outputs:
 #   Board (n x n board) representing the updated board with the line shot
 function perform_line_shot(board, direction, index)
-    if direction == horizontal: # Horizontal
+    if direction == horizontal # Horizontal
         for j in 1:board_size
             board[index, j] = (board[index, j][1], 1)
         end
@@ -693,7 +693,7 @@ function feature_concatenate_vector(state, action)
     state_flattened = [cell for row in state_board for cell in row]
 
     # Extract action components
-    action_row, action_col, action_direction, action_type = action
+    action_type, x, y = action
 
     # Concatenate state and action components into a single feature vector
     feature_vector = [
@@ -705,10 +705,9 @@ function feature_concatenate_vector(state, action)
         agents_shots_left[2], # Line shots left for agent
         opponents_shots_left[1], # Bomb shots left for opponent
         opponents_shots_left[2], # Line shots left for opponent
-        action_row,
-        action_col,
-        action_direction,
-        action_type
+        action_type,
+        x,
+        y
     ]
 
     return feature_vector
@@ -840,8 +839,8 @@ end
 function get_action(action) 
     i = action - 1
 
-    num_spaces = board_size ** 2
-    shot_type, x, y
+    num_spaces = board_size ^ 2
+
     if i < num_spaces  # single shot
         shot_type = normal_shot
         x = div(i, board_size)
@@ -876,7 +875,7 @@ function find_action(model, state)
     _, _, _, _, (bomb_shots_left, line_shots_left), _ = state # Parse how many shots of each type we have left
 
 
-    for i in 1:action_size:
+    for i in 1:action_size
         shot_type, x, y = get_action(i)
         if shot_type == bomb_shot && bomb_shots_left <= 0
             continue
@@ -884,10 +883,10 @@ function find_action(model, state)
         if shot_type == line_shot && line_shots_left <= 0
             continue
         end
-        feature = feature_concatenate_vector(state, action)
+        feature = feature_concatenate_vector(state, (shot_type, x, y))
         q = forward(model, feature)
         if maximum_q < q
-            action_selected = action
+            action_selected = (shot_type, x, y)
             maximum_q = q
         end
     end
