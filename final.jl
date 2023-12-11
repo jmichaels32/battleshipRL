@@ -559,13 +559,13 @@ function next_state(state, action, agents_board, opponents_board)
     new_opponents_lives_left = lives_left(opponents_board) # Only used in reward
     new_agents_ships_left = ships_left(agents_board)
     new_opponents_ships_left = ships_left(opponents_board)
-    state = (convert_to_state_board(opponents_board), 
-            new_agents_lives_left,
-            new_agents_ships_left,
-            new_opponents_ships_left,
-            (agents_bomb_shots_left, agents_line_shots_left),
-            (opponents_bomb_shots_left, opponents_line_shots_left)
-            )
+    new_state = (convert_to_state_board(opponents_board), 
+                new_agents_lives_left,
+                new_agents_ships_left,
+                new_opponents_ships_left,
+                (agents_bomb_shots_left, agents_line_shots_left),
+                (opponents_bomb_shots_left, opponents_line_shots_left)
+                )
 
     # Calculate the reward
     #   Rewards for possible scenarios are:
@@ -619,7 +619,7 @@ function next_state(state, action, agents_board, opponents_board)
         reward += agent_hit_same_spot_normal
     end
 
-    return state, agents_board, opponents_board, reward
+    return new_state, agents_board, opponents_board, reward
 end
 
 # Functionality:
