@@ -79,7 +79,7 @@ fleet = [2, 3, 3, 4, 5]
 # Discount Factor
 # Since we can never return to a state, we'll never have loops 
 # Thus, discount factor of 1 is fine
-gamma = 0.9
+gamma = 0.95
 
 # Which feature vector to use
 # Possibilities include 'concatenation', 'fourier'
@@ -789,7 +789,7 @@ end
 #   Updated model with new weights after performing backpropagation
 
 optim = Flux.Optimise.Adam(0.001, (0.9, 0.999), 1.0e-8)
-function backprop(model, move_index, state, action, new_state, new_action, reward)
+function backprop(model, target, move_index, state, action, new_state, new_action, reward)
     # Calculate step size
     eta = calculate_step_size(move_index)
 
@@ -801,7 +801,7 @@ function backprop(model, move_index, state, action, new_state, new_action, rewar
     end
 
     # Perform the backward pass using Flux's gradient function
-    grads = Flux.gradient(() -> loss(model, feature, reward, next_feature), Flux.params(model))
+    grads = Flux.gradient(() -> loss(model, target, feature, reward, next_feature), Flux.params(model))
 
     """
     for p in Flux.params(model)
@@ -830,13 +830,13 @@ function l2_regularization(model::Flux.Chain, lambda::Float64)
 end
 
 # Loss function definition for the Q-learning update rule
-function loss(model, feature, reward, next_feature)
+function loss(model, target, feature, reward, next_feature)
     next_Q_values = 0
     current_Q_values = forward(model, feature)[1]
     if next_feature != nothing
         next_Q_values = forward(model, next_feature)[1]
     end
-    td_error = (reward + gamma * next_Q_values - current_Q_values)^2 + l2_regularization(model, lambda)
+    td_error = (reward + gamma * next_Q_values - current_Q_values)^2 #+ l2_regularization(model, lambda)
     return td_error
 end
 
@@ -918,7 +918,7 @@ end
 # 
 # Outputs:
 #   Next optimal action
-function find_action(model, state, agent_actions_remaining, is_cur)
+function find_action(model, target, state, agent_actions_remaining, is_cur)
     action_selected = nothing
     maximum_q = -Inf
     _, _, _, _, (bomb_shots_left, line_shots_left), _ = state # Parse how many shots of each type we have left
@@ -976,6 +976,14 @@ function main()
             Dense(layer_sizes[2], output_size)
         )
 
+        target_model = Chain(
+            Dense(input_size, layer_sizes[1], relu),
+            Dense(layer_sizes[1], layer_sizes[2], relu),
+            Dense(layer_sizes[2], output_size)
+        )
+
+        Flux.loadparams!(target_model, Flux.params(model))
+
         agent_wins = zeros(Int8, num_games_to_try)
         opp_wins = zeros(Int8, num_games_to_try)
         losses = zeros(Float64, num_games_to_try)
@@ -1008,7 +1016,7 @@ function main()
             while !is_game_ended(agents_board, opponents_board)[3]
 
                 # Find which action we should take dependent on the model
-                action = find_action(model, state, agent_actions_remaining, true)
+                action = find_action(model, target_model, state, agent_actions_remaining, true)
                 
                 new_state, agents_board, opponents_board, reward = next_state(state, action, agents_board, opponents_board, opp_actions_remaining)
 
@@ -1018,7 +1026,7 @@ function main()
                 #println()
                 a, o, _ = is_game_ended(agents_board, opponents_board)
                 if a || o
-                    model = backprop(model, move_index, state, action, new_state, nothing, 1000)
+                    model = backprop(model, target_model, move_index, state, action, new_state, nothing, 1000)
                     if a
                         println("OPPONENT WIN")
                         opp_wins[iter] = 1
@@ -1029,7 +1037,7 @@ function main()
                     break
                 end
 
-                new_action = find_action(model, new_state, agent_actions_remaining, false)
+                new_action = find_action(model, target_model, new_state, agent_actions_remaining, false)
 
                 #println(action)
                 #println(reward)
