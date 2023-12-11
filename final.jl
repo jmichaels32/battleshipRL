@@ -416,10 +416,10 @@ end
 function random_opponent_action(agents_board, bomb_shots_left, line_shots_left)
     random_action = rand([bomb_shot, line_shot, normal_shot])
 
-    if random_action == bomb_shot
+    if random_action == bomb_shot && bomb_shots_left > 0
         agents_board = perform_bomb_shot(agents_board, rand(1:board_size), rand(1:board_size))
         bomb_shots_left -= 1
-    elseif random_action == line_shot
+    elseif random_action == line_shot && line_shots_left > 0
         agents_board = perform_line_shot(agents_board, rand(1:2), rand(1:board_size))
         line_shots_left -= 1
     elseif random_action == normal_shot
@@ -909,7 +909,6 @@ function find_action(model, state)
         feature = feature_concatenate_vector(state, (shot_type, x, y))
         q = forward(model, feature)[1]
         if maximum_q < q
-            println("action found ", string(q), " ", (shot_type, x, y))
             action_selected = (shot_type, x, y)
             maximum_q = q
         end
@@ -964,12 +963,12 @@ function main()
 
             new_action = find_action(model, new_state)
 
-            println(new_action)
+            println(action)
             println(reward)
 
             model = backprop(model, move_index, state, action, new_state, new_action, reward)
 
-            print()
+            println(state)
 
             state = new_state
 
