@@ -660,23 +660,6 @@ end
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 
 # Functionality:
-#   Defines our feature given our agent's current state and chosen action
-#   Uses Fourier transform (sum of cosines) as features to increase generality 
-# 
-# Inputs:
-#   State (tuple) described above
-#   Action (tuple) described above
-#   maxFourier (integer) describing the maximum sum of terms used
-#
-# Outputs:
-#   Cosine for each permuted value
-#   EX: (for integer state action (s, a))
-#       [1, cos(pi * (s)), cos(pi * (a)), cos(pi * (s + a)), cos(pi * (2s)), ...]
-function feature_fourier_vector(state, action, maxFourier=maxFourier)
-
-end
-
-# Functionality:
 #   Simple concatenation feature vector 
 #
 # Inputs:
