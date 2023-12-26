@@ -2,7 +2,7 @@ using LinearAlgebra
 using DataFrames
 using Random
 using CSV
-using Flux
+using Flux 
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 # DESCRIPTIONS
@@ -817,8 +817,11 @@ function loss(model, feature, reward, next_feature)
     if next_feature != nothing
         next_Q_values = forward(model, next_feature)[1]
     end
-    td_error = reward + gamma * next_Q_values - current_Q_values + l2_regularization(model, lambda)
-    return td_error
+    td_error = reward + gamma * next_Q_values - current_Q_values
+    println("TD Error: ", td_error)
+    l2 = l2_regularization(model, lambda)
+    println("Regularization: ", l2)
+    return td_error ^ 2 + l2
 end
 
 # --------------------------------------------------------------------
@@ -989,7 +992,7 @@ function main()
 
             model = backprop(model, move_index, state, action, new_state, new_action, reward)
 
-            println("Loss: ", loss(model, feature_concatenate_vector(state, action), reward, feature_concatenate_vector(new_state, new_action)))
+            #println("Loss: ", loss(model, feature_concatenate_vector(state, action), reward, feature_concatenate_vector(new_state, new_action)))
 
             state = new_state
 
